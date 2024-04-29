@@ -183,6 +183,7 @@ class ClosedSetDetector:
             object.latent_centroid = np.zeros(EMBEDDING_LEN)
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
             object.latent_centroid[class_id] = 1
+            object.class_id = class_id
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
