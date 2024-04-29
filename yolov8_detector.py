@@ -105,10 +105,13 @@ class ClosedSetDetector:
         objects.objects = []
 
         image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
-        depth_m = (
-            self.br.imgmsg_to_cv2(depth, desired_encoding="passthrough") / 1.0 # for TUM depth is in meters already, for realsense it is in mm
-        )  # Depth in meters
+        # depth_m = (
+        #     self.br.imgmsg_to_cv2(depth, desired_encoding="passthrough") / 1000.0 # for TUM depth is in meters already, for realsense it is in mm
+        # )  # Depth in meters
+        depth_m = self.br.imgmsg_to_cv2(depth, "32FC1") # Depth in meters
+        # print(f'+++++ depth mean: {np.nanmean(depth_m)} depth max: {np.nanmax(depth_m)} depth min: {np.nanmin(depth_m)} +++++')
         depth_m = cv2.resize(depth_m, dsize=(1280, 736), interpolation=cv2.INTER_NEAREST) # do this for realsense (img dim not a multiple of max stride length 32)
+        # print(f'===== depth mean: {np.nanmean(depth_m)} depth max: {np.nanmax(depth_m)} depth min: {np.nanmin(depth_m)} =====')
         # depth_m = cv2.resize(depth_m, dsize=(640, 360), interpolation=cv2.INTER_NEAREST) # do this for zed (img dim not a multiple of max stride length 32)
 
 
@@ -150,7 +153,7 @@ class ClosedSetDetector:
             class_id = int(class_id)
             print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
             # print(f'depth shape: {np.shape(depth_m)}')
-            print(f'class_id: {class_id} conf: {conf}')
+            print(f'class_id: {class_id} object_name:{self.model.names[class_id]} conf: {conf}')
             mask = mask > 0  # Convert to binary 
             #print(mask)
             obj_depth = np.nanmean(depth_m[mask], dtype=float)             
