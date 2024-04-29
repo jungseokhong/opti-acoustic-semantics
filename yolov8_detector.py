@@ -32,13 +32,15 @@ def unproject(u, v, depth, cam_info):
     cy = cam_info.K[5]
     x = (u - cx) * depth / fx
     y = (v - cy) * depth / fy
-    print("x: ", x)
-    print("y: ", y)
-    print("depth: ", depth)
-    print("fx: ", fx)
-    print("fy: ", fy)
-    print("cx: ", cx)
-    print("cy: ", cy)
+    # print("x: ", x)
+    # print("y: ", y)
+    # print("depth: ", depth)
+    # print("fx: ", fx)
+    # print("fy: ", fy)
+    # print("cx: ", cx)
+    # print("cy: ", cy)
+    print(f'x: {x:.3f} y: {y:.3f} depth: {depth:.3f}')
+    print(f'fx: {fx:.3f} fy: {fy:.3f} cx: {cx:.3f} cy: {cy:.3f}')
     return x, y, depth
 
 
@@ -73,10 +75,10 @@ class ClosedSetDetector:
         # )
         
         # JACKAL PARAMS
-        cam_info_topic = rospy.get_param("cam_info_topic", "/camera/color/camera_info")
-        rgb_topic = rospy.get_param("rgb_topic", "/camera/color/image_raw")
+        cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/rgb/camera_info")
+        rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/rgb/image_rect_color")
         depth_topic = rospy.get_param(
-            "depth_topic", "/camera/aligned_depth_to_color/image_raw"
+            "depth_topic", "/zed2i/zed_node/depth/depth_registered"
         )
         self.cam_info_sub = message_filters.Subscriber(
             cam_info_topic, CameraInfo, queue_size=1
@@ -104,12 +106,15 @@ class ClosedSetDetector:
 
         image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
         depth_m = (
-            self.br.imgmsg_to_cv2(depth, desired_encoding="passthrough") / 1000.0 # for TUM depth is in meters already, for realsense it is in mm
+            self.br.imgmsg_to_cv2(depth, desired_encoding="passthrough") / 1.0 # for TUM depth is in meters already, for realsense it is in mm
         )  # Depth in meters
         depth_m = cv2.resize(depth_m, dsize=(1280, 736), interpolation=cv2.INTER_NEAREST) # do this for realsense (img dim not a multiple of max stride length 32)
+        # depth_m = cv2.resize(depth_m, dsize=(640, 360), interpolation=cv2.INTER_NEAREST) # do this for zed (img dim not a multiple of max stride length 32)
+
 
         # Run inference args: https://docs.ultralytics.com/modes/predict/#inference-arguments
         results = self.model(image_cv, verbose=False, conf=CONF_THRESH, imgsz=(736, 1280))[0] # do this for realsense (img dim not a multiple of max stride length 32)
+        # results = self.model(image_cv, verbose=False, conf=CONF_THRESH, imgsz=(360, 640))[0] # do this for realsense (img dim not a multiple of max stride length 32)
         #results = self.model(image_cv, verbose=False, conf=CONF_THRESH)[0]
 
         # Extract segmentation masks
@@ -143,15 +148,15 @@ class ClosedSetDetector:
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
-            print(np.shape(mask))
-            print(np.shape(depth_m))
-            print(class_id)
-            print(conf)
+            print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
+            # print(f'depth shape: {np.shape(depth_m)}')
+            print(f'class_id: {class_id} conf: {conf}')
             mask = mask > 0  # Convert to binary 
             #print(mask)
             obj_depth = np.nanmean(depth_m[mask], dtype=float)             
             obj_centroid = np.mean(np.argwhere(mask), axis=0)
-            print(obj_centroid)
+            print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
+            # print(obj_centroid)
 
             # Unproject centroid to 3D
             x, y, z = unproject(obj_centroid[1], obj_centroid[0], obj_depth, cam_info)
@@ -159,7 +164,7 @@ class ClosedSetDetector:
             object.geometric_centroid.y = y
             object.geometric_centroid.z = z
             
-            if (conf < .8):
+            if (conf < .5):
                 object.geometric_centroid.x = np.nan
                 object.geometric_centroid.y = np.nan
                 object.geometric_centroid.z = np.nan
