@@ -20,7 +20,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-
+DETECTOR__CONF_THRESH = 0.7  # Confidence threshold used for the detector, default is 0.5
 
 def unproject(u, v, depth, cam_info):
     """
@@ -151,15 +151,23 @@ class ClosedSetDetector:
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
-            print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
-            # print(f'depth shape: {np.shape(depth_m)}')
-            print(f'class_id: {class_id} object_name:{self.model.names[class_id]} conf: {conf}')
+
+            # print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
+            # print(f'class_id: {class_id} object_name:{self.model.names[class_id]} conf: {conf}')
             mask = mask > 0  # Convert to binary 
-            #print(mask)
             obj_depth = np.nanmean(depth_m[mask], dtype=float)             
             obj_centroid = np.mean(np.argwhere(mask), axis=0)
+            # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
+
+            if ((conf < DETECTOR__CONF_THRESH) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
+                or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth)) or (obj_depth > 5)):
+                print(f'inf nan passes')
+                continue
+
+            print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
+            print(f'class_id: {class_id} object_name:{self.model.names[class_id]} conf: {conf}')
             print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
-            # print(obj_centroid)
+
 
             # Unproject centroid to 3D
             x, y, z = unproject(obj_centroid[1], obj_centroid[0], obj_depth, cam_info)
@@ -167,7 +175,7 @@ class ClosedSetDetector:
             object.geometric_centroid.y = y
             object.geometric_centroid.z = z
             
-            if (conf < .5):
+            if (conf < DETECTOR__CONF_THRESH):
                 object.geometric_centroid.x = np.nan
                 object.geometric_centroid.y = np.nan
                 object.geometric_centroid.z = np.nan
@@ -175,6 +183,12 @@ class ClosedSetDetector:
             object.latent_centroid = np.zeros(EMBEDDING_LEN)
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
             object.latent_centroid[class_id] = 1
+
+            # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
+            #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
+            #     print(f'inf nan passes')
+            #     continue
+
 
             objects.objects.append(object)
             
