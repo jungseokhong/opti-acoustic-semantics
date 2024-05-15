@@ -18,9 +18,10 @@ import sys
 np.set_printoptions(threshold=sys.maxsize)
 
 
-CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
+CONF_THRESH = 0.7  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.7  # Confidence threshold used for the detector, default is 0.5
+OBJECT_DEPTH_TRHES = 3.0  # Depth threshold for objects, default is 5.0
 
 def unproject(u, v, depth, cam_info):
     """
@@ -160,7 +161,7 @@ class ClosedSetDetector:
             # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
 
             if ((conf < DETECTOR__CONF_THRESH) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
-                or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth)) or (obj_depth > 5)):
+                or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth)) or (obj_depth > OBJECT_DEPTH_TRHES)):
                 print(f'inf nan passes')
                 continue
 
