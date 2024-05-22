@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
-# # from pyquaternion import Quaternion ## pip install pyquaternion
-
+from scipy.spatial.transform import Rotation as R
+# check the following for projection matrix: https://www.cs.cmu.edu/~16385/s17/Slides/11.1_Camera_matrix.pdf
 
 def parse_data(file_path):
     # Read the entire file
@@ -62,7 +62,7 @@ def parse_data(file_path):
     position_array = np.array(position_data)
     orientation_array = np.array(orientation_data)
     # Reorder the orientation array
-    orientation_array = np.roll(orientation_array, -3)
+    # orientation_array = np.roll(orientation_array, -3) # for w,x,y,z convention
 
     return position_array, orientation_array, landmark_points_array, landmark_classes_array
 
@@ -78,7 +78,6 @@ print("Landmark Classes:\n", landmark_classes)
 
 
 # Define camera matrix K
-# K: [260.9886474609375, 0.0, 322.07867431640625, 0.0, 260.9886474609375, 179.7025146484375, 0.0, 0.0, 1.0]
 fx = 260.9886474609375
 fy = 260.9886474609375
 cx = 322.07867431640625
@@ -89,48 +88,46 @@ K = np.array([[fx, 0, cx],
 
 # Quaternion to rotation matrix conversion
 q = orientation
-q_norm = np.linalg.norm(q)
-q = q / q_norm  # Normalize the quaternion
 
-# myQuaternion = Quaternion(w, x, y, z)
-# R = myQuaternion.rotation_matrix
-# print(f'Rotation matrix..: {R}')
-# print(R*R.T)
+r = R.from_quat(q)
+rotation_matrix = r.as_matrix() # body to world
 
-# rotation_matrix = np.array([
-#     [1 - 2*q[2]**2 - 2*q[3]**2, 2*q[1]*q[2] - 2*q[3]*q[0], 2*q[1]*q[3] + 2*q[2]*q[0]],
-#     [2*q[1]*q[2] + 2*q[3]*q[0], 1 - 2*q[1]**2 - 2*q[3]**2, 2*q[2]*q[3] - 2*q[1]*q[0]],
-#     [2*q[1]*q[3] - 2*q[2]*q[0], 2*q[2]*q[3] + 2*q[1]*q[0], 1 - 2*q[1]**2 - 2*q[2]**2]
-# ])
 
-rotation_matrix = np.array([
-    [q[0]**2+q[1]**2 - q[2]**2 - q[3]**2, 2*q[1]*q[2] - 2*q[3]*q[0], 2*q[1]*q[3] + 2*q[2]*q[0]],
-    [2*q[1]*q[2] + 2*q[3]*q[0], q[0]**2 - q[1]**2 + q[2]**2 - q[3]**2, 2*q[2]*q[3] - 2*q[1]*q[0]],
-    [2*q[1]*q[3] - 2*q[2]*q[0], 2*q[2]*q[3] + 2*q[1]*q[0], q[0]**2 - q[1]**2 - q[2]**2 + q[3]**2]
-])
+print(f'Rotation matrix: {rotation_matrix}, inv: {np.linalg.inv(rotation_matrix)}')
+print(f'Det: {np.linalg.det(rotation_matrix)}, inv det {np.linalg.det(np.linalg.inv(rotation_matrix))}')
 
-print(f'Rotation matrix: {rotation_matrix}')
-print(rotation_matrix*rotation_matrix.T)
 
-# camToBody = np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]])
-camToBody = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]])
-bodytocam = np.linalg.inv(camToBody)
-print(f' Cam to Body: {camToBody} Body to cam: {bodytocam}')
-# new_rotation_matrix = np.matmul(rotation_matrix, bodytocam)
+camToBody = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]]) # R_B_C
+print(f' Cam to Body: {camToBody}')
 new_rotation_matrix = np.matmul(rotation_matrix, camToBody)
 
+R_W_B = rotation_matrix
+R_B_W = np.linalg.inv(R_W_B)
+R_B_C = camToBody
+R_C_B = np.linalg.inv(R_B_C)
+R_C_W = np.matmul(R_C_B, R_B_W)
 
 # Convert rotation matrix to Rodrigues vector
 R_vec, _ = cv2.Rodrigues(new_rotation_matrix)
-
-
 t_vec = position
 
 # Project points
 dist_coeffs = np.zeros(4)  # Assuming no lens distortion
-points_2d, _ = cv2.projectPoints(landmark_points, R_vec, t_vec, K, dist_coeffs)
 
-print(points_2d)
+# building projection matrix
+RT = np.zeros([3,4])
+RT[:3, :3] = R_C_W # np.linalg.inv(new_rotation_matrix)
+RT[:3, 3] = -R_C_W@t_vec
+print(f'RT: {RT}')
+
+# Step 1: Transpose the matrix to make it 3xN
+transposed_points = landmark_points.T
+# Step 2: Add a row of ones to make it 4xN
+homogeneous_points = np.vstack([transposed_points, np.ones(transposed_points.shape[1])])
+
+# points_2d, _ = cv2.projectPoints(landmark_points, new_rotation_matrix, t_vec, K, dist_coeffs)
+points_2d_homo = K @ RT @ homogeneous_points
+print(points_2d_homo.shape, points_2d_homo.T)
 
 height = 360
 width = 640
@@ -139,8 +136,8 @@ width = 640
 image = np.zeros((height, width, 3), dtype=np.uint8)
 
 # Draw each point and class label on the image
-for i, point in enumerate(points_2d):
-    x, y = int(point[0][0]), int(point[0][1])
+for i, point in enumerate(points_2d_homo.T):
+    x, y = int(point[0]/point[2]), int(point[1]/point[2])
     if 0 <= x < width and 0 <= y < height:
         cv2.circle(image, (x, y), 3, (0, 255, 0), -1)  # Green dot
         cv2.putText(image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
