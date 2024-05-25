@@ -129,8 +129,8 @@ homogeneous_points = np.vstack([transposed_points, np.ones(transposed_points.sha
 points_2d_homo = K @ RT @ homogeneous_points
 print(points_2d_homo.shape, points_2d_homo.T)
 
-height = 360
-width = 640
+height = 540# 360
+width = 960 #640
 
 # Initialize a blank image
 image = np.zeros((height, width, 3), dtype=np.uint8)

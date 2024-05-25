@@ -146,6 +146,30 @@ class ClosedSetDetector:
         class_ids = results.boxes.cls.data.cpu().numpy()
         bboxes = results.boxes.xyxy.data.cpu().numpy()
         confs = results.boxes.conf.data.cpu().numpy()
+
+
+        classNames = [
+                "person", "bicycle", "car", "motorcycle", "airplane",
+                "bus", "train", "truck", "boat", "traffic light",
+                "fire hydrant", "stop sign", "parking meter", "benchhhh", "bird",
+                "cat", "dog", "horse", "sheep", "cow",
+                "elephant", "bear", "zebra", "giraffe", "backpack",
+                "umbrella", "handbag", "tie", "suitcase", "frisbee",
+                "skis", "snowboard", "sports ball", "kite", "baseball bat",
+                "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
+                "wine glass", "cupppp", "fork", "knife", "spoon",
+                "bowl", "banana", "apple", "sandwich", "orange",
+                "broccoli", "carrot", "hot dog", "pizza", "donut",
+                "cake", "chair", "couch", "potted plant", "bed",
+                "dining table", "toilet", "tv", "laptop", "mouse",
+                "remote", "keyboard", "cell phone", "microwave", "oven",
+                "toaster", "sink", "refrigerator", "bookkk", "clock",
+                "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
+        ## once classnames are updated, it can be turned into string
+        class_names_string = ", ".join(classNames)
+        # print(type(class_names_string), class_names_string)
+
+
         if len(masks) == 0:
             return
         for mask, class_id, bboxes, conf in zip(masks, class_ids, bboxes, confs):
@@ -194,7 +218,7 @@ class ClosedSetDetector:
 
             objects.objects.append(object)
             
-
+        objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
 
 
