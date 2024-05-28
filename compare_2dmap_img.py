@@ -34,8 +34,9 @@ class Compare2DMapAndImage:
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.sync = message_filters.ApproximateTimeSynchronizer(
-            (self.yoloimg_sub, self.mapinfo_sub), 10, 0.025
-        )
+            (self.yoloimg_sub, self.mapinfo_sub), 10, 0.1
+        ) #0.025 need to reduce this time difference
+        # need to update so it can handle time offset/pass time offset
         self.sync.registerCallback(self.forward_pass)
 
     def forward_pass(self, yoloimg : RosImage, map_info : MapInfo) -> None:
