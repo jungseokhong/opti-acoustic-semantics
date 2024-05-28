@@ -131,7 +131,8 @@ class ClosedSetDetector:
             im = PILImage.fromarray(im_array[..., ::-1])  # RGB PIL image
             
             msg_yolo_detections = RosImage()
-            msg_yolo_detections.header.stamp = rgb.header.stamp
+            # msg_yolo_detections.header.stamp = rgb.header.stamp ## original code. Is this necessary?
+            msg_yolo_detections.header.stamp = rospy.Time.now() ## time step updated for syncing with map info
             msg_yolo_detections.height = im.height
             msg_yolo_detections.width = im.width
             msg_yolo_detections.encoding = "rgb8"
