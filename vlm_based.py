@@ -205,6 +205,8 @@ class ClosedSetDetector:
                 class_ids.append(new_cls_id[0])
                 confs.append(confidence)
 
+            print(list(self.classes.values()))
+            class_names_string = ", ".join(list(self.classes.values()))
             '''
             '''
 
@@ -256,6 +258,8 @@ class ClosedSetDetector:
 
             objects.objects.append(object)
 
+
+        objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
 
 
