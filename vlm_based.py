@@ -20,7 +20,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.5  # Confidence threshold used for the detector, default is 0.5
+DETECTOR__CONF_THRESH = 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 3.0  # Depth threshold for objects, default is 5.0
 
 
@@ -59,8 +59,8 @@ class ClosedSetDetector:
 
         if method == "ram":
             import sys
-            sys.path.append("/home/beantown/ran/llm-mapping")
-            sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
+            sys.path.append("/home/jungseok/git/llm-mapping")
+            sys.path.append("/home/jungseok/git/Grounded-Segment-Anything/GroundingDINO")
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
 
             # setting up
@@ -179,7 +179,7 @@ class ClosedSetDetector:
             msg_yolo_detections.header.stamp = rgb.header.stamp
             msg_yolo_detections.height = im.height
             msg_yolo_detections.width = im.width
-            msg_yolo_detections.encoding = "rgb8"
+            msg_yolo_detections.encoding = "bgr8"
             msg_yolo_detections.is_bigendian = False
             msg_yolo_detections.step = 3 * im.width
             msg_yolo_detections.data = np.array(im).tobytes()
