@@ -42,5 +42,10 @@ $ conda install -c anaconda scikit-learn
 ```
 
 
+## LLM SLAM
 
-
+Prerequisite: git clone llm-mapping repo
+```
+$ export PYTHONPATH=code/Grounded-Segment-Anything/GroundingDINO:code/Grounded-Segment-Anything/segment_anything:$PYTHONPATH
+$ python vlm_based.py
+```
