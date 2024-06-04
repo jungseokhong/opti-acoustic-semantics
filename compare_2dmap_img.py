@@ -34,7 +34,7 @@ class Compare2DMapAndImage:
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.sync = message_filters.ApproximateTimeSynchronizer(
-            (self.yoloimg_sub, self.mapinfo_sub), 10, 0.1
+            (self.yoloimg_sub, self.mapinfo_sub), 100, 0.1
         ) #0.025 need to reduce this time difference
         # need to update so it can handle time offset/pass time offset
         self.sync.registerCallback(self.forward_pass)
@@ -153,7 +153,7 @@ class Compare2DMapAndImage:
         for i, point in enumerate(points_2d_homo.T):
             x, y = int(point[0]/point[2]), int(point[1]/point[2])
             if 0 <= x < IMG_WIDTH and 0 <= y < IMG_HEIGHT:
-                cv2.circle(projected_image, (x, y), 3, (0, 255, 0), -1)  # Green dot
+                cv2.circle(projected_image, (x, y), 4, (0, 255, 0), -1)  # Green dot
                 cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 
