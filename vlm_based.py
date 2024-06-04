@@ -54,7 +54,7 @@ class ClosedSetDetector:
     def __init__(self) -> None:
         assert torch.cuda.is_available()
 
-        method: Literal["yolo", "ram"] = "ram"
+        method: Literal["yolo", "ram"] = "ram" #"ram"
         self.method = method
 
         if method == "ram":
@@ -146,7 +146,7 @@ class ClosedSetDetector:
                 im = PILImage.fromarray(im_array[..., ::-1])  # RGB PIL image
 
                 msg_yolo_detections = RosImage()
-                msg_yolo_detections.header.stamp = rgb.header.stamp
+                msg_yolo_detections.header.stamp = rospy.Time.now()
                 msg_yolo_detections.height = im.height
                 msg_yolo_detections.width = im.width
                 msg_yolo_detections.encoding = "rgb8"
@@ -159,6 +159,26 @@ class ClosedSetDetector:
             class_ids = results.boxes.cls.data.cpu().numpy()
             bboxes = results.boxes.xyxy.data.cpu().numpy()
             confs = results.boxes.conf.data.cpu().numpy()
+
+            classNames = [
+                "person", "bicycle", "car", "motorcycle", "airplane",
+                "bus", "train", "truck", "boat", "traffic light",
+                "fire hydrant", "stop sign", "parking meter", "benchhhh", "bird",
+                "cat", "dog", "horse", "sheep", "cow",
+                "elephant", "bear", "zebra", "giraffe", "backpack",
+                "umbrella", "handbag", "tie", "suitcase", "frisbee",
+                "skis", "snowboard", "sports ball", "kite", "baseball bat",
+                "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
+                "wine glass", "cupppp", "fork", "knife", "spoon",
+                "bowl", "banana", "apple", "sandwich", "orange",
+                "broccoli", "carrot", "hot dog", "pizza", "donut",
+                "cake", "chair", "couch", "potted plant", "bed",
+                "dining table", "toilet", "tv", "laptop", "mouse",
+                "remote", "keyboard", "cell phone", "microwave", "oven",
+                "toaster", "sink", "refrigerator", "bookkk", "clock",
+                "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
+            ## once classnames are updated, it can be turned into string
+            class_names_string = ", ".join(classNames)
 
         else:  # self.method = "ram"
             from demos.ram_grounded_sam import run_single_image
@@ -176,7 +196,7 @@ class ClosedSetDetector:
             #visualization?
             im = PILImage.fromarray(visualization)
             msg_yolo_detections = RosImage()
-            msg_yolo_detections.header.stamp = rgb.header.stamp
+            msg_yolo_detections.header.stamp = rospy.Time.now()
             msg_yolo_detections.height = im.height
             msg_yolo_detections.width = im.width
             msg_yolo_detections.encoding = "bgr8"
