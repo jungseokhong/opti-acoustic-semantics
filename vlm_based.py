@@ -59,8 +59,8 @@ class ClosedSetDetector:
 
         if method == "ram":
             import sys
-            sys.path.append("/home/jungseok/git/llm-mapping")
-            sys.path.append("/home/jungseok/git/Grounded-Segment-Anything/GroundingDINO")
+            sys.path.append("/home/beantown/ran/llm-mapping")
+            sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
 
             # setting up

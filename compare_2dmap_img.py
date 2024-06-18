@@ -22,8 +22,8 @@ K = np.array([[fx, 0, cx],
               [0, fy, cy],
               [0, 0, 1]])
 
-IMG_HEIGHT = 540# 360
-IMG_WIDTH = 960 #640
+IMG_HEIGHT = 540  # 360
+IMG_WIDTH = 960  # 640
 
 
 class Compare2DMapAndImage:
@@ -35,11 +35,12 @@ class Compare2DMapAndImage:
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.sync = message_filters.ApproximateTimeSynchronizer(
             (self.yoloimg_sub, self.mapinfo_sub), 100, 0.1
-        ) #0.025 need to reduce this time difference
+        )  # 0.025 need to reduce this time difference
         # need to update so it can handle time offset/pass time offset
         self.sync.registerCallback(self.forward_pass)
+        self.frame_num = 0
 
-    def forward_pass(self, yoloimg : RosImage, map_info : MapInfo) -> None:
+    def forward_pass(self, yoloimg: RosImage, map_info: MapInfo) -> None:
         # Convert ROS Image to OpenCV Image
         yoloimg_cv = self.bridge.imgmsg_to_cv2(yoloimg, desired_encoding='bgr8')
         # print(map_info)
@@ -47,9 +48,9 @@ class Compare2DMapAndImage:
         # Extract data from map_info
         position, orientation, landmark_points, landmark_classes = self.parse_data(map_info)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, img = yoloimg_cv)
+        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
+                                                       img=yoloimg_cv)
         # projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes)
-
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -64,7 +65,6 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
-
 
     def parse_data(self, map_info):
 
@@ -125,9 +125,9 @@ class Compare2DMapAndImage:
         dist_coeffs = np.zeros(4)  # Assuming no lens distortion
 
         # building projection matrix
-        RT = np.zeros([3,4])
-        RT[:3, :3] = R_C_W # np.linalg.inv(new_rotation_matrix)
-        RT[:3, 3] = -R_C_W@t_vec
+        RT = np.zeros([3, 4])
+        RT[:3, :3] = R_C_W  # np.linalg.inv(new_rotation_matrix)
+        RT[:3, 3] = -R_C_W @ t_vec
         print(f'RT: {RT}')
 
         # Step 1: Transpose the matrix to make it 3xN
@@ -144,20 +144,62 @@ class Compare2DMapAndImage:
 
         # Initialize a blank image
         if img is not None and img.size > 0:
-            projected_image = img
+            projected_image = img[:]
         else:
 
             projected_image = np.zeros((IMG_HEIGHT, IMG_WIDTH, 3), dtype=np.uint8)
 
+        json_out = {}
+        json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+        print("idx :", json_out["image_idx"])
+        obj = []
         # Draw each point and class label on the image
         for i, point in enumerate(points_2d_homo.T):
-            x, y = int(point[0]/point[2]), int(point[1]/point[2])
+            x, y = int(point[0] / point[2]), int(point[1] / point[2])
             if 0 <= x < IMG_WIDTH and 0 <= y < IMG_HEIGHT:
                 cv2.circle(projected_image, (x, y), 4, (0, 255, 0), -1)  # Green dot
-                cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (255, 255, 255), 1)
+                obj_dic = {"label": landmark_classes[i],
+                            "x": x,
+                            "y": y
+                           }
+                obj.append(obj_dic)
+        json_out["contents"] = obj
 
+        self.save_img(img, projected_image)
+        self.save_json(json_out)
 
         return projected_image
+
+    def save_img(self, img, projected_image):
+        from pathlib import Path
+        import datetime
+
+        current_time = datetime.datetime.now()
+        time_string = current_time.strftime("%Y%m%d_%H%M%S")
+
+        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+
+        output_path = output_dir  # / time_string
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        _output_path = output_path / "{:05d}_ori.png".format(self.frame_num)
+        cv2.imwrite(str(_output_path), img)
+
+        # _output_path = output_path / "{:05d}_det.png".format(self.frame_num)
+        # cv2.imwrite(str(_output_path), projected_image)
+
+        self.frame_num += 1
+
+    def save_json(self, json_out):
+        import json
+        from pathlib import Path
+        #self.json_out.append(json_out)
+        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        name = json_out["image_idx"][:-4] + ".json"
+        with open(output_dir / name, "w") as f:
+            json.dump(json_out, f, indent=4)
 
     def combine_images(self, img1, img2):
         # Ensure both images are the same height
