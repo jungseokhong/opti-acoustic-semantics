@@ -22,8 +22,8 @@ K = np.array([[fx, 0, cx],
               [0, fy, cy],
               [0, 0, 1]])
 
-IMG_HEIGHT = 540  # 360
-IMG_WIDTH = 960  # 640
+IMG_HEIGHT = 540# 360
+IMG_WIDTH = 960 #640
 
 
 class Compare2DMapAndImage:
@@ -35,22 +35,23 @@ class Compare2DMapAndImage:
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.sync = message_filters.ApproximateTimeSynchronizer(
             (self.yoloimg_sub, self.mapinfo_sub), 100, 0.1
-        )  # 0.025 need to reduce this time difference
+        ) #0.025 need to reduce this time difference
         # need to update so it can handle time offset/pass time offset
         self.sync.registerCallback(self.forward_pass)
         self.frame_num = 0
 
-    def forward_pass(self, yoloimg: RosImage, map_info: MapInfo) -> None:
+    def forward_pass(self, yoloimg : RosImage, map_info : MapInfo) -> None:
         # Convert ROS Image to OpenCV Image
         yoloimg_cv = self.bridge.imgmsg_to_cv2(yoloimg, desired_encoding='bgr8')
         # print(map_info)
 
         # Extract data from map_info
         position, orientation, landmark_points, landmark_classes = self.parse_data(map_info)
+        print(landmark_classes)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
-                                                       img=yoloimg_cv)
+        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, img = yoloimg_cv)
         # projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes)
+
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -65,6 +66,7 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
+
 
     def parse_data(self, map_info):
 
@@ -125,9 +127,9 @@ class Compare2DMapAndImage:
         dist_coeffs = np.zeros(4)  # Assuming no lens distortion
 
         # building projection matrix
-        RT = np.zeros([3, 4])
-        RT[:3, :3] = R_C_W  # np.linalg.inv(new_rotation_matrix)
-        RT[:3, 3] = -R_C_W @ t_vec
+        RT = np.zeros([3,4])
+        RT[:3, :3] = R_C_W # np.linalg.inv(new_rotation_matrix)
+        RT[:3, 3] = -R_C_W@t_vec
         print(f'RT: {RT}')
 
         # Step 1: Transpose the matrix to make it 3xN

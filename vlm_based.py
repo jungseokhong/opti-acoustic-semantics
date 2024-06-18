@@ -54,7 +54,7 @@ class ClosedSetDetector:
     def __init__(self) -> None:
         assert torch.cuda.is_available()
 
-        method: Literal["yolo", "ram"] = "ram" #"ram"
+        method: Literal["yolo", "ram"] = "ram"
         self.method = method
 
         if method == "ram":
@@ -64,7 +64,7 @@ class ClosedSetDetector:
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
 
             # setting up
-            GraundedSamArgs.visualize_SAM = False  # todo uss GPU!
+            GraundedSamArgs.visualize_SAM = False
             self.models = load_models()
             self.inference = run_single_image
             self.classes = {}
@@ -277,7 +277,6 @@ class ClosedSetDetector:
             #     continue
 
             objects.objects.append(object)
-
 
         objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
