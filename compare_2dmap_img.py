@@ -6,6 +6,7 @@ import rospy
 import torch
 from cv_bridge import CvBridge
 import cv2
+from params_proto import PrefixProto, Proto
 from semanticslam_ros.msg import MapInfo
 from sensor_msgs.msg import CameraInfo
 from PIL import Image as PILImage
@@ -26,19 +27,56 @@ IMG_HEIGHT = 540# 360
 IMG_WIDTH = 960 #640
 
 
+class vision_filter(PrefixProto):
+    SEED: int = 123
+    model: str = "gpt-4o"
+    map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
+    database_dir = None
+    system_prompt = """
+    a user will be given a list of objects that are supposed to be in a photo. Your task is to determine if all the objects in the list are present in the photo. 
+
+    Respond according to the following format:
+    1. If there are objects in the list that are not present in the photo:
+       - **User**: List of objects = [object1, object2, ...]
+       - **System**: Error = [missing object1, missing object2, ...]
+    
+    2. If all objects in the list are present in the photo:
+       - **User**: List of objects = [object1, object2, ...]
+       - **System**: Error = []
+       
+    Example 1:
+    - **User**: List of objects = [person, sky]
+    - **System**: Error = []
+    Example 2:
+    - **User**: List of objects = [person, sky, tree]
+    - **System**: Error = [tree]
+
+    Now, let's start:
+    """
+
 class Compare2DMapAndImage:
     def __init__(self):
+
+        vlm_filtering = True
+
         rospy.loginfo("compare_map_img service started")
         self.bridge = CvBridge()
         self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.sync = message_filters.ApproximateTimeSynchronizer(
-            (self.yoloimg_sub, self.mapinfo_sub), 100, 0.1
+            (self.yoloimg_sub, self.mapinfo_sub), 1000, 0.001
         ) #0.025 need to reduce this time difference
         # need to update so it can handle time offset/pass time offset
         self.sync.registerCallback(self.forward_pass)
+
         self.frame_num = 0
+
+        if vlm_filtering:
+            import sys
+            sys.path.append("/home/beantown/ran/llm-mapping")
+            from beantown_agent.map_agent import vision_agent
+            self.vlm_filter = vision_agent(vision_filter)
 
     def forward_pass(self, yoloimg : RosImage, map_info : MapInfo) -> None:
         # Convert ROS Image to OpenCV Image
@@ -153,7 +191,6 @@ class Compare2DMapAndImage:
 
         json_out = {}
         json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-        print("idx :", json_out["image_idx"])
         obj = []
         # Draw each point and class label on the image
         for i, point in enumerate(points_2d_homo.T):
@@ -165,7 +202,7 @@ class Compare2DMapAndImage:
                 obj_dic = {"label": landmark_classes[i],
                             "x": x,
                             "y": y
-                           }
+                }
                 obj.append(obj_dic)
         json_out["contents"] = obj
 
@@ -186,7 +223,7 @@ class Compare2DMapAndImage:
         output_path = output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
-        _output_path = output_path / "{:05d}_ori.png".format(self.frame_num)
+        _output_path = output_path / "{:05d}.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), img)
 
         # _output_path = output_path / "{:05d}_det.png".format(self.frame_num)
