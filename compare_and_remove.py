@@ -16,6 +16,12 @@ from semanticslam_ros.srv import RemoveClass, RemoveClassRequest, RemoveClassRes
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
+def generate_unique_colors(num_colors):
+    hsv_colors = [(i * 180 // num_colors, 255, 255) for i in range(num_colors)]  # Generate colors with maximum saturation and value
+    bgr_colors = [cv2.cvtColor(np.uint8([[hsv]]), cv2.COLOR_HSV2BGR)[0][0] for hsv in hsv_colors]
+    return [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
+
+
 class Compare2DMapAndImage:
     def __init__(self):
         rospy.loginfo("compare_map_img service started")
@@ -39,6 +45,10 @@ class Compare2DMapAndImage:
         self.min_time_diff = 10
         self.classlist = []
         self.classstring = ""
+
+        self.num_classes = 20  # Example: Specify the number of classes
+        self.colors = generate_unique_colors(self.num_classes)  # Generate unique colors for these classes
+
         self.bridge = CvBridge()
         # self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
         self.yoloimg_sub = message_filters.Subscriber('/zed2i/zed_node/rgb/image_rect_color', RosImage)
@@ -99,9 +109,9 @@ class Compare2DMapAndImage:
         # print(map_info)
 
         # Extract data from map_info
-        position, orientation, landmark_points, landmark_classes = self.parse_data(map_info)
+        position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights = self.parse_data(map_info)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, img = yoloimg_cv)
+        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, img = yoloimg_cv)
         # projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes)
 
         # Combine yoloimg_cv and projected_image side by side
@@ -127,6 +137,8 @@ class Compare2DMapAndImage:
         landmark_classes = []
         position_data = []
         orientation_data = []
+        landmark_widths = []
+        landmark_heights = []
 
         num_landmarks = len(map_info.landmark_points)
         for i in range(num_landmarks):
@@ -134,6 +146,9 @@ class Compare2DMapAndImage:
             landmark_points.append(map_info.landmark_points[i].y)
             landmark_points.append(map_info.landmark_points[i].z)
             landmark_classes.append(map_info.landmark_classes[i])
+            landmark_widths.append(map_info.landmark_widths[i])
+            landmark_heights.append(map_info.landmark_heights[i])
+
         
         orientation_data.append(map_info.pose.orientation.x)
         orientation_data.append(map_info.pose.orientation.y)
@@ -149,12 +164,14 @@ class Compare2DMapAndImage:
         landmark_classes_array = np.array(landmark_classes)
         position_array = np.array(position_data)
         orientation_array = np.array(orientation_data)
+        landmark_widths_array = np.array(landmark_widths)
+        landmark_heights_array = np.array(landmark_heights)
         # Reorder the orientation array
         # orientation_array = np.roll(orientation_array, -3) # for w,x,y,z convention
 
-        return position_array, orientation_array, landmark_points_array, landmark_classes_array
+        return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array
 
-    def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, img=None):
+    def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, img=None):
 
         # Quaternion to rotation matrix conversion
         q = orientation
@@ -200,13 +217,44 @@ class Compare2DMapAndImage:
         else:
 
             projected_image = np.zeros((self.img_height, self.img_width, 3), dtype=np.uint8)
+        # Map class indices to colors
+        class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
 
-        # Draw each point and class label on the image
-        for i, point in enumerate(points_2d_homo.T):
-            x, y = int(point[0]/point[2]), int(point[1]/point[2])
+        # print(f"landmark widths {landmark_widths} landmark_heights {landmark_heights}, 2dpoints {points_2d_homo}")
+
+        # Iterate over each projected point
+        for i, (point_3d, point_2d) in enumerate(zip(landmark_points, points_2d_homo.T)):
+            x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
+            # Compute the Euclidean distance between the point and the camera position
+            Z = np.linalg.norm(point_3d - position)
+
+            # Scale widths and heights based on the depth
+            scale_factor_w = self.K[0,0] / Z  # Assuming fx is used for scaling (can adjust this formula based on actual focal length and depth behavior)
+            scale_factor_h = self.K[1,1] / Z
+            scaled_width = int(landmark_widths[i] * scale_factor_w)
+            scaled_height = int(landmark_heights[i] * scale_factor_h)
+
+            # Optionally add class labels next to the bounding box
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
-                cv2.circle(projected_image, (x, y), 4, (0, 255, 0), -1)  # Green dot
-                cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                color = class_to_color[i]
+                # Calculate top-left and bottom-right corners
+                top_left = (x - scaled_width // 2, y - scaled_height // 2)
+                bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
+
+                # Draw the bounding box
+                cv2.rectangle(projected_image, top_left, bottom_right, color, 2)  # Green box
+
+                cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
+                cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
+
+        # # Draw each point and class label on the image
+        # for i, point in enumerate(points_2d_homo.T):
+        #     x, y = int(point[0]/point[2]), int(point[1]/point[2])
+        #     if 0 <= x < self.img_width and 0 <= y < self.img_height:
+        #         cv2.circle(projected_image, (x, y), 4, (0, 255, 0), -1)  # Green dot
+        #         cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         return projected_image
 
