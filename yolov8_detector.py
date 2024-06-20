@@ -112,12 +112,14 @@ class ClosedSetDetector:
         # )  # Depth in meters
         depth_m = self.br.imgmsg_to_cv2(depth, "32FC1") # Depth in meters
         # print(f'+++++ depth mean: {np.nanmean(depth_m)} depth max: {np.nanmax(depth_m)} depth min: {np.nanmin(depth_m)} +++++')
+        # resizing depth is probably not needed
         depth_m = cv2.resize(depth_m, dsize=(1280, 736), interpolation=cv2.INTER_NEAREST) # do this for realsense (img dim not a multiple of max stride length 32)
         # print(f'===== depth mean: {np.nanmean(depth_m)} depth max: {np.nanmax(depth_m)} depth min: {np.nanmin(depth_m)} =====')
         # depth_m = cv2.resize(depth_m, dsize=(640, 360), interpolation=cv2.INTER_NEAREST) # do this for zed (img dim not a multiple of max stride length 32)
 
 
         # Run inference args: https://docs.ultralytics.com/modes/predict/#inference-arguments
+        # [TODO]: this causes error in the later stage. need to put the results back to the original image size
         results = self.model(image_cv, verbose=False, conf=CONF_THRESH, imgsz=(736, 1280))[0] # do this for realsense (img dim not a multiple of max stride length 32)
         # results = self.model(image_cv, verbose=False, conf=CONF_THRESH, imgsz=(360, 640))[0] # do this for realsense (img dim not a multiple of max stride length 32)
         #results = self.model(image_cv, verbose=False, conf=CONF_THRESH)[0]
@@ -129,6 +131,7 @@ class ClosedSetDetector:
         # Show the results
         for r in results:
             im_array = r.plot()  # plot a BGR numpy array of predictions
+            print("im_array shape: ", im_array.shape)
             im = PILImage.fromarray(im_array[..., ::-1])  # RGB PIL image
             
             msg_yolo_detections = RosImage()
@@ -146,7 +149,7 @@ class ClosedSetDetector:
 
         masks = results.masks.data.cpu().numpy()
         class_ids = results.boxes.cls.data.cpu().numpy()
-        bboxes = results.boxes.xyxy.data.cpu().numpy()
+        bboxes = results.boxes.xywh.data.cpu().numpy() # boxes.xyxy or boxes.xywh   # box with xywh format, (N, 4)
         confs = results.boxes.conf.data.cpu().numpy()
 
 
@@ -174,7 +177,7 @@ class ClosedSetDetector:
 
         if len(masks) == 0:
             return
-        for mask, class_id, bboxes, conf in zip(masks, class_ids, bboxes, confs):
+        for mask, class_id, bbox, conf in zip(masks, class_ids, bboxes, confs):
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
@@ -184,6 +187,9 @@ class ClosedSetDetector:
             mask = mask > 0  # Convert to binary 
             obj_depth = np.nanmean(depth_m[mask], dtype=float)             
             obj_centroid = np.mean(np.argwhere(mask), axis=0)
+            ## rescale obj_centroid to the original image size
+            obj_centroid[0] = obj_centroid[0] * 540/736
+            obj_centroid[1] = obj_centroid[1] * 960/1280
             # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
 
             if ((conf < DETECTOR__CONF_THRESH) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
@@ -194,9 +200,11 @@ class ClosedSetDetector:
             print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
             print(f'class_id: {class_id} object_name:{self.model.names[class_id]} conf: {conf}')
             print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
+            print(f'bbox: {bbox}')
 
 
-            # Unproject centroid to 3D
+
+            # Unproject centroid to 3D in camera frame // addcentroidsrealclass projects the centroid to 3D in body frame
             x, y, z = unproject(obj_centroid[1], obj_centroid[0], obj_depth, cam_info)
             object.geometric_centroid.x = x
             object.geometric_centroid.y = y
@@ -211,6 +219,8 @@ class ClosedSetDetector:
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
             object.latent_centroid[class_id] = 1
             object.class_id = class_id
+            object.bbox_height = 0
+            object.bbox_width = 0
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
