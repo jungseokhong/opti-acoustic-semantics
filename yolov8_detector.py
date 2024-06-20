@@ -44,6 +44,27 @@ def unproject(u, v, depth, cam_info):
     print(f'fx: {fx:.3f} fy: {fy:.3f} cx: {cx:.3f} cy: {cy:.3f}')
     return x, y, depth
 
+def compute_w_h_in_3d(w, h, Z, fx, fy):
+    """
+    Compute the real world dimensions of a bounding box given its pixel dimensions,
+    depth from the camera, and the camera's focal lengths.
+
+    Args:
+    - x1, y1: Top-left corner of the bounding box in pixels.
+    - x2, y2: Bottom-right corner of the bounding box in pixels.
+    - Z: Depth at which the object is located (same unit as desired for output, typically meters).
+    - fx, fy: Focal lengths of the camera in pixels (from camera calibration).
+
+    Returns:
+    - width, height in real-world units, corresponding to the provided depth.
+    """
+    width_pixels = w
+    height_pixels = h
+
+    width_real = (width_pixels * Z) / fx
+    height_real = (height_pixels * Z) / fy
+
+    return width_real, height_real
 
 class ClosedSetDetector:
     """
@@ -188,6 +209,8 @@ class ClosedSetDetector:
             obj_depth = np.nanmean(depth_m[mask], dtype=float)             
             obj_centroid = np.mean(np.argwhere(mask), axis=0)
             ## rescale obj_centroid to the original image size
+
+            #[TODO] don't hardcode 540 960 image sizes
             obj_centroid[0] = obj_centroid[0] * 540/736
             obj_centroid[1] = obj_centroid[1] * 960/1280
             # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
@@ -219,8 +242,14 @@ class ClosedSetDetector:
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
             object.latent_centroid[class_id] = 1
             object.class_id = class_id
-            object.bbox_height = 0
-            object.bbox_width = 0
+
+            fx = cam_info.K[0]
+            fy = cam_info.K[4]
+
+            object.bbox_width, object.bbox_height = compute_w_h_in_3d(bbox[2], bbox[3], obj_depth, fx, fy)
+
+            # object.bbox_height = 0
+            # object.bbox_width = 0
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
