@@ -102,7 +102,7 @@ class ClosedSetDetector:
         """
 
         objects = ObjectsVector()
-        objects.header = rgb.header
+        objects.header = rospy.Time.now() # rgb.header
         objects.objects = []
 
         image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
