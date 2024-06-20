@@ -102,7 +102,8 @@ class ClosedSetDetector:
         """
 
         objects = ObjectsVector()
-        objects.header = rospy.Time.now() # rgb.header
+        # objects.header.stamp = rospy.Time.now() # rgb.header ## [TODO]: check if I can use RGB header timestamp for everything
+        objects.header = rgb.header ## [TODO]: check if I can use RGB header timestamp for everything
         objects.objects = []
 
         image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
@@ -131,8 +132,8 @@ class ClosedSetDetector:
             im = PILImage.fromarray(im_array[..., ::-1])  # RGB PIL image
             
             msg_yolo_detections = RosImage()
-            # msg_yolo_detections.header.stamp = rgb.header.stamp ## original code. Is this necessary?
-            msg_yolo_detections.header.stamp = rospy.Time.now() ## time step updated for syncing with map info
+            msg_yolo_detections.header.stamp = rgb.header.stamp ## original code. Is this necessary?
+            # msg_yolo_detections.header.stamp = rospy.Time.now() ## time step updated for syncing with map info
             msg_yolo_detections.height = im.height
             msg_yolo_detections.width = im.width
             msg_yolo_detections.encoding = "rgb8"
