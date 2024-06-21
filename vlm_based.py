@@ -20,8 +20,8 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.76  # Confidence threshold used for the detector, default is 0.5
-OBJECT_DEPTH_TRHES = 3.0  # Depth threshold for objects, default is 5.0
+DETECTOR__CONF_THRESH = 0.7 #0.76  # Confidence threshold used for the detector, default is 0.5
+OBJECT_DEPTH_TRHES = 10.0  #3.0  # Depth threshold for objects, default is 5.0
 
 
 def unproject(u, v, depth, cam_info):
@@ -54,13 +54,13 @@ class ClosedSetDetector:
     def __init__(self) -> None:
         assert torch.cuda.is_available()
 
-        method: Literal["yolo", "ram"] = "ram" #"ram"
+        method: Literal["yolo", "ram"] = "ram"
         self.method = method
 
         if method == "ram":
             import sys
-            sys.path.append("/home/jungseok/git/llm-mapping")
-            sys.path.append("/home/jungseok/git/Grounded-Segment-Anything/GroundingDINO")
+            sys.path.append("/home/beantown/ran/llm-mapping")
+            sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
 
             # setting up
@@ -146,7 +146,7 @@ class ClosedSetDetector:
                 im = PILImage.fromarray(im_array[..., ::-1])  # RGB PIL image
 
                 msg_yolo_detections = RosImage()
-                msg_yolo_detections.header.stamp = rospy.Time.now()
+                msg_yolo_detections.header.stamp = rgb.header.stamp
                 msg_yolo_detections.height = im.height
                 msg_yolo_detections.width = im.width
                 msg_yolo_detections.encoding = "rgb8"
@@ -196,7 +196,7 @@ class ClosedSetDetector:
             #visualization?
             im = PILImage.fromarray(visualization)
             msg_yolo_detections = RosImage()
-            msg_yolo_detections.header.stamp = rospy.Time.now()
+            msg_yolo_detections.header.stamp = rgb.header.stamp
             msg_yolo_detections.height = im.height
             msg_yolo_detections.width = im.width
             msg_yolo_detections.encoding = "bgr8"
