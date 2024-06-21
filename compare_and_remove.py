@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
+import os
 
 import message_filters
 import numpy as np
 import rospy
-import torch
 from cv_bridge import CvBridge
 import cv2
-from semanticslam_ros.msg import MapInfo, ObjectsVector, ObjectVector
+from openai import OpenAI
+
+from semanticslam_ros.msg import MapInfo, ObjectsVector
 from sensor_msgs.msg import CameraInfo
-from PIL import Image as PILImage
 from sensor_msgs.msg import Image as RosImage
-import sys
 from scipy.spatial.transform import Rotation as R
-from semanticslam_ros.srv import RemoveClass, RemoveClassRequest, RemoveClassResponse
+from semanticslam_ros.srv import RemoveClass, RemoveClassRequest
+from ast import literal_eval
+
+from vlm_filter_utils import vision_filter
+
+import sys
+sys.path.append("/home/beantown/ran/llm-mapping")
+from beantown_agent.map_agent import vision_agent
+from beantown_agent.agent_utils import return_str
+
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
@@ -24,20 +33,19 @@ def generate_unique_colors(num_colors):
 
 class Compare2DMapAndImage:
     def __init__(self):
+
+        self.save_projections = True
+
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
         fy = 527.150146484375
         cx = 485.47442626953125
         cy = 271.170166015625
-        # fx = 260.9886474609375
-        # fy = 260.9886474609375
-        # cx = 322.07867431640625
-        # cy = 179.7025146484375
 
         self.K = np.array([[fx, 0, cx],
-                    [0, fy, cy],
-                    [0, 0, 1]])
+                           [0, fy, cy],
+                           [0, 0, 1]])
 
         self.img_height = 540
         self.img_width = 960
@@ -57,7 +65,7 @@ class Compare2DMapAndImage:
 
         # Separate subscriber for CameraInfo
         self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/rgb/camera_info', CameraInfo, self.camera_info_callback)
-        
+
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
 
         # Use a cache for the mapinfo_sub to store messages
@@ -68,10 +76,16 @@ class Compare2DMapAndImage:
 
         self.sync = message_filters.ApproximateTimeSynchronizer(
             (self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
-        ) #0.025 need to reduce this time difference
+        )  # 0.025 need to reduce this time difference
         # # need to update so it can handle time offset/pass time offset
 
         self.sync.registerCallback(self.forward_pass)
+
+        self.frame_num = 0
+        self.vlm_input = None
+
+        self.client = OpenAI()
+        self.vlm_filter = vision_agent(vision_filter)
 
     def camera_info_callback(self, cam_info: CameraInfo):
         # Update camera intrinsic matrix K
@@ -112,7 +126,8 @@ class Compare2DMapAndImage:
         position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights = self.parse_data(map_info)
         # Project landmarks to the image
         projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, img = yoloimg_cv)
-        # projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes)
+
+        self.vlm_input = yoloimg_cv
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -149,7 +164,7 @@ class Compare2DMapAndImage:
             landmark_widths.append(map_info.landmark_widths[i])
             landmark_heights.append(map_info.landmark_heights[i])
 
-        
+
         orientation_data.append(map_info.pose.orientation.x)
         orientation_data.append(map_info.pose.orientation.y)
         orientation_data.append(map_info.pose.orientation.z)
@@ -211,6 +226,9 @@ class Compare2DMapAndImage:
         points_2d_homo = self.K @ RT @ homogeneous_points
         # print(points_2d_homo.shape, points_2d_homo.T)
 
+        json_out = {}
+        json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+        obj = []
         # Initialize a blank image
         if img is not None and img.size > 0:
             projected_image = img
@@ -247,16 +265,47 @@ class Compare2DMapAndImage:
                 cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
                 cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+                obj_dic = {"label": landmark_classes[i],
+                           "x": x,
+                           "y": y
+                           }
+                obj.append(obj_dic)
 
-
-        # # Draw each point and class label on the image
-        # for i, point in enumerate(points_2d_homo.T):
-        #     x, y = int(point[0]/point[2]), int(point[1]/point[2])
-        #     if 0 <= x < self.img_width and 0 <= y < self.img_height:
-        #         cv2.circle(projected_image, (x, y), 4, (0, 255, 0), -1)  # Green dot
-        #         cv2.putText(projected_image, landmark_classes[i], (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            if self.save_projections:
+                json_out["contents"] = obj
+                self.save_img(img, projected_image)
+                self.save_json(json_out)
 
         return projected_image
+
+    def save_img(self, img, projected_image):
+        from pathlib import Path
+        import datetime
+
+        current_time = datetime.datetime.now()
+        time_string = current_time.strftime("%Y%m%d_%H%M%S")
+
+        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+
+        output_path = output_dir  # / time_string
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        _output_path = output_path / "{:05d}.png".format(self.frame_num)
+        cv2.imwrite(str(_output_path), img)
+
+        # _output_path = output_path / "{:05d}_det.png".format(self.frame_num)
+        # cv2.imwrite(str(_output_path), projected_image)
+
+        self.frame_num += 1
+
+    def save_json(self, json_out):
+        import json
+        from pathlib import Path
+        # self.json_out.append(json_out)
+        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        name = json_out["image_idx"][:-4] + ".json"
+        with open(output_dir / name, "w") as f:
+            json.dump(json_out, f, indent=4)
 
     def combine_images(self, img1, img2):
         # Ensure both images are the same height
@@ -276,29 +325,50 @@ class Compare2DMapAndImage:
         # Returns the index of the specified class in the class list
         try:
             self.classlist = self.classstring.split(", ")
-            print(f"Class '{class_name}' found at index {self.classlist.index(class_name)},{self.classlist[2]} {self.classlist[17]}")
-            return self.classlist.index(class_name)
+            out=[]
+            for cname in class_name:
+                #print(f"Class '{cname}' found at index {self.classlist.index(cname)}")
+                out.append(self.classlist.index(cname))
+            return out #self.classlist.index(class_name)
         except ValueError:
             print(f"Class '{class_name}' not found in class list.")
-            return -1  # Returns -1 if the class is not found
+            return [-1]  # Returns -1 if the class is not found
 
 
     def get_model_output(self):
-        # Placeholder function for your model's output
-        # need to subscribe the result topic and decide what to remove based on that topic
-        # return random.randint(1, 10)
-        print("Class list: ", self.classlist)
-        ## remove car class
-        class_name = "car"
-        return self.get_class_index(class_name)
+
+        if self.classstring == "":
+            return [-1]
+
+        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_input, self.classstring, self.client)
+        str_response = return_str(vlm_response)
+
+        # Extract the part of the string that represents the list
+        list_from_string = str_response.split('=')[-1].strip()
+        try:
+            list_from_string = literal_eval(list_from_string)
+        except:
+            import re
+            list_from_string = re.sub(r'(\w+)', r'"\1"', list_from_string)
+            list_from_string = literal_eval(list_from_string)
+
+        print("tags :", self.classstring)
+        print("remove : ", list_from_string)
+        self.vlm_filter.reset_memory() #reset vlm's memory in order to remain only system commands
+
+        return self.get_class_index(list_from_string)
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
         try:
-            remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
-            req = RemoveClassRequest(class_id=class_id)
-            res = remove_class(req)
-            return res.success
+            out=[]
+            for id in class_id:
+                remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
+                req = RemoveClassRequest(class_id=id)
+                res = remove_class(req)
+                out.append(res.success)
+            print(out)
+            return -1 if False in out else 1 #res.success
         except rospy.ServiceException as e:
             rospy.logerr("Service call failed: %s" % e)
             return False
@@ -310,8 +380,8 @@ if __name__ == "__main__":
 
     while not rospy.is_shutdown():
         class_id = detector.get_model_output()
-        rospy.loginfo("Calling service to remove class ID: %d" % class_id)
+        rospy.loginfo(f"Calling service to remove class ID: {class_id}")
         success = detector.call_remove_class_service(class_id)
         rospy.loginfo("Service call success: %s" % success)
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(1)  # Simulate processing time 
+        rospy.sleep(10)  # Simulate processing time 10
