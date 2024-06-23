@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+from pathlib import Path
 
 import message_filters
 import numpy as np
@@ -7,8 +8,8 @@ import rospy
 from cv_bridge import CvBridge
 import cv2
 from openai import OpenAI
-
 from semanticslam_ros.msg import MapInfo, ObjectsVector
+
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image as RosImage
 from scipy.spatial.transform import Rotation as R
@@ -22,11 +23,15 @@ sys.path.append("/home/beantown/ran/llm-mapping")
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
 
+OPENAI_API_BASE = "https://api.openai.com/v1"
+os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
+
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
 def generate_unique_colors(num_colors):
-    hsv_colors = [(i * 180 // num_colors, 255, 255) for i in range(num_colors)]  # Generate colors with maximum saturation and value
+    hsv_colors = [(i * 180 // num_colors, 255, 255) for i in
+                  range(num_colors)]  # Generate colors with maximum saturation and value
     bgr_colors = [cv2.cvtColor(np.uint8([[hsv]]), cv2.COLOR_HSV2BGR)[0][0] for hsv in hsv_colors]
     return [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
 
@@ -35,6 +40,7 @@ class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
+        self.output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -73,7 +79,6 @@ class Compare2DMapAndImage:
         self.yoloimg_cache = message_filters.Cache(self.yoloimg_sub, 500)
         self.classlist_cache = message_filters.Cache(self.classlist_sub, 500)
 
-
         self.sync = message_filters.ApproximateTimeSynchronizer(
             (self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
         )  # 0.025 need to reduce this time difference
@@ -99,7 +104,7 @@ class Compare2DMapAndImage:
                            [0, fy, cy],
                            [0, 0, 1]])
 
-    def forward_pass(self, yoloimg : RosImage, map_info : MapInfo, objects_info : ObjectsVector) -> None:
+    def forward_pass(self, yoloimg: RosImage, map_info: MapInfo, objects_info: ObjectsVector) -> None:
 
         # Print the timestamps of the messages
         yoloimg_time = yoloimg.header.stamp
@@ -123,11 +128,13 @@ class Compare2DMapAndImage:
         # print(map_info)
 
         # Extract data from map_info
-        position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights = self.parse_data(map_info)
+        position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights = self.parse_data(
+            map_info)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, img = yoloimg_cv)
+        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
+                                                       landmark_widths, landmark_heights, img=yoloimg_cv)
 
-        self.vlm_input = yoloimg_cv
+
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -144,7 +151,6 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
-
 
     def parse_data(self, map_info):
 
@@ -163,7 +169,6 @@ class Compare2DMapAndImage:
             landmark_classes.append(map_info.landmark_classes[i])
             landmark_widths.append(map_info.landmark_widths[i])
             landmark_heights.append(map_info.landmark_heights[i])
-
 
         orientation_data.append(map_info.pose.orientation.x)
         orientation_data.append(map_info.pose.orientation.y)
@@ -186,15 +191,16 @@ class Compare2DMapAndImage:
 
         return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array
 
-    def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, img=None):
+    def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, landmark_widths,
+                                landmark_heights, img=None):
 
         # Quaternion to rotation matrix conversion
         q = orientation
 
         r = R.from_quat(q)
-        rotation_matrix = r.as_matrix() # body to world
+        rotation_matrix = r.as_matrix()  # body to world
 
-        camToBody = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]]) # R_B_C
+        camToBody = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])  # R_B_C
         # print(f' Cam to Body: {camToBody}')
         new_rotation_matrix = np.matmul(rotation_matrix, camToBody)
 
@@ -212,9 +218,9 @@ class Compare2DMapAndImage:
         dist_coeffs = np.zeros(4)  # Assuming no lens distortion
 
         # building projection matrix
-        RT = np.zeros([3,4])
-        RT[:3, :3] = R_C_W # np.linalg.inv(new_rotation_matrix)
-        RT[:3, 3] = -R_C_W@t_vec
+        RT = np.zeros([3, 4])
+        RT[:3, :3] = R_C_W  # np.linalg.inv(new_rotation_matrix)
+        RT[:3, 3] = -R_C_W @ t_vec
         # print(f'RT: {RT}')
 
         # Step 1: Transpose the matrix to make it 3xN
@@ -226,29 +232,29 @@ class Compare2DMapAndImage:
         points_2d_homo = self.K @ RT @ homogeneous_points
         # print(points_2d_homo.shape, points_2d_homo.T)
 
-        json_out = {}
-        json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-        obj = []
+
         # Initialize a blank image
         if img is not None and img.size > 0:
-            projected_image = img
+            projected_image = img.copy()
         else:
-
             projected_image = np.zeros((self.img_height, self.img_width, 3), dtype=np.uint8)
         # Map class indices to colors
         class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
-
         # print(f"landmark widths {landmark_widths} landmark_heights {landmark_heights}, 2dpoints {points_2d_homo}")
 
         # Iterate over each projected point
+        json_out = {}
+        obj = []
+        self.vlm_cls_input = []
         for i, (point_3d, point_2d) in enumerate(zip(landmark_points, points_2d_homo.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
 
             # Scale widths and heights based on the depth
-            scale_factor_w = self.K[0,0] / Z  # Assuming fx is used for scaling (can adjust this formula based on actual focal length and depth behavior)
-            scale_factor_h = self.K[1,1] / Z
+            scale_factor_w = self.K[
+                                 0, 0] / Z  # Assuming fx is used for scaling (can adjust this formula based on actual focal length and depth behavior)
+            scale_factor_h = self.K[1, 1] / Z
             scaled_width = int(landmark_widths[i] * scale_factor_w)
             scaled_height = int(landmark_heights[i] * scale_factor_h)
 
@@ -263,48 +269,42 @@ class Compare2DMapAndImage:
                 cv2.rectangle(projected_image, top_left, bottom_right, color, 2)  # Green box
 
                 cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
-                cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (255, 255, 255), 1)
 
                 obj_dic = {"label": landmark_classes[i],
                            "x": x,
-                           "y": y
+                           "y": y,
+                           "z": Z
                            }
                 obj.append(obj_dic)
+                self.vlm_cls_input.append(landmark_classes[i])
 
             if self.save_projections:
+                self.frame_num += 1
+                json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
                 json_out["contents"] = obj
                 self.save_img(img, projected_image)
                 self.save_json(json_out)
 
+        self.vlm_img_input = img
         return projected_image
 
     def save_img(self, img, projected_image):
-        from pathlib import Path
-        import datetime
 
-        current_time = datetime.datetime.now()
-        time_string = current_time.strftime("%Y%m%d_%H%M%S")
-
-        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
-
-        output_path = output_dir  # / time_string
+        output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
         _output_path = output_path / "{:05d}.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), img)
 
-        # _output_path = output_path / "{:05d}_det.png".format(self.frame_num)
-        # cv2.imwrite(str(_output_path), projected_image)
-
-        self.frame_num += 1
+        _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
+        cv2.imwrite(str(_output_path), projected_image)
 
     def save_json(self, json_out):
         import json
-        from pathlib import Path
-        # self.json_out.append(json_out)
-        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
         name = json_out["image_idx"][:-4] + ".json"
-        with open(output_dir / name, "w") as f:
+        with open(self.output_dir / name, "w") as f:
             json.dump(json_out, f, indent=4)
 
     def combine_images(self, img1, img2):
@@ -320,27 +320,35 @@ class Compare2DMapAndImage:
         # Concatenate images horizontally
         combined_image = np.hstack((img1, img2))
         return combined_image
-    
+
     def get_class_index(self, class_name):
         # Returns the index of the specified class in the class list
         try:
             self.classlist = self.classstring.split(", ")
-            out=[]
+            out = []
             for cname in class_name:
-                #print(f"Class '{cname}' found at index {self.classlist.index(cname)}")
+                # print(f"Class '{cname}' found at index {self.classlist.index(cname)}")
                 out.append(self.classlist.index(cname))
-            return out #self.classlist.index(class_name)
+            return out  # self.classlist.index(class_name)
         except ValueError:
             print(f"Class '{class_name}' not found in class list.")
             return [-1]  # Returns -1 if the class is not found
-
 
     def get_model_output(self):
 
         if self.classstring == "":
             return [-1]
 
-        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_input, self.classstring, self.client)
+        if self.vlm_cls_input == []:
+            print(self.vlm_cls_input)
+            return [-1]
+
+        print("frame : ", self.frame_num)
+        #self.frame_num += 1  # increase frame number saving only
+        print("tags :", self.vlm_cls_input)
+
+        self.vlm_filter.reset_memory()
+        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_img_input, self.vlm_cls_input, self.client)
         str_response = return_str(vlm_response)
 
         # Extract the part of the string that represents the list
@@ -352,23 +360,21 @@ class Compare2DMapAndImage:
             list_from_string = re.sub(r'(\w+)', r'"\1"', list_from_string)
             list_from_string = literal_eval(list_from_string)
 
-        print("tags :", self.classstring)
         print("remove : ", list_from_string)
-        self.vlm_filter.reset_memory() #reset vlm's memory in order to remain only system commands
+        self.vlm_cls_input = []
 
         return self.get_class_index(list_from_string)
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
         try:
-            out=[]
+            out = []
             for id in class_id:
                 remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
                 req = RemoveClassRequest(class_id=id)
                 res = remove_class(req)
                 out.append(res.success)
-            print(out)
-            return -1 if False in out else 1 #res.success
+            return -1 if False in out else 1  # res.success
         except rospy.ServiceException as e:
             rospy.logerr("Service call failed: %s" % e)
             return False
