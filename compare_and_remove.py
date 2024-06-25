@@ -19,7 +19,8 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-sys.path.append("/home/beantown/ran/llm-mapping")
+# sys.path.append("/home/beantown/ran/llm-mapping")
+sys.path.append("/home/jungseok/git/llm-mapping")
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
 
@@ -28,6 +29,11 @@ os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
 
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
+
+# OPENAI_API_BASE = 
+# OPENAI_API_KEY = 
+# os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
+# os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY 
 
 def generate_unique_colors(num_colors):
     hsv_colors = [(i * 180 // num_colors, 255, 255) for i in
@@ -40,8 +46,8 @@ class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
-
+        #self.output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        self.output_dir = Path("/home/jungseok/data/llm_data/rosbag_output/")
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
