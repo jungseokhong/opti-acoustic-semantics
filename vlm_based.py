@@ -46,6 +46,29 @@ def unproject(u, v, depth, cam_info):
     return x, y, depth
 
 
+def compute_w_h_in_3d(w, h, Z, fx, fy):
+    """
+    Compute the real world dimensions of a bounding box given its pixel dimensions,
+    depth from the camera, and the camera's focal lengths.
+
+    Args:
+    - x1, y1: Top-left corner of the bounding box in pixels.
+    - x2, y2: Bottom-right corner of the bounding box in pixels.
+    - Z: Depth at which the object is located (same unit as desired for output, typically meters).
+    - fx, fy: Focal lengths of the camera in pixels (from camera calibration).
+
+    Returns:
+    - width, height in real-world units, corresponding to the provided depth.
+    """
+    width_pixels = w
+    height_pixels = h
+
+    width_real = (width_pixels * Z) / fx
+    height_real = (height_pixels * Z) / fy
+
+    return width_real, height_real
+
+
 class ClosedSetDetector:
     """
     This holds an instance of YoloV8 and runs inference
@@ -59,8 +82,10 @@ class ClosedSetDetector:
 
         if method == "ram":
             import sys
-            sys.path.append("/home/beantown/ran/llm-mapping")
-            sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
+            # sys.path.append("/home/beantown/ran/llm-mapping")
+            # sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
+            sys.path.append("/home/jungseok/git/llm-mapping")
+            sys.path.append("/home/jungseok/git/Grounded-Segment-Anything/GroundingDINO")
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
 
             # setting up
@@ -258,6 +283,11 @@ class ClosedSetDetector:
             object.geometric_centroid.x = x
             object.geometric_centroid.y = y
             object.geometric_centroid.z = z
+
+            fx = cam_info.K[0]
+            fy = cam_info.K[4]
+
+            object.bbox_width, object.bbox_height = compute_w_h_in_3d(bboxes[2]-bboxes[0], bboxes[3]-bboxes[1], obj_depth, fx, fy)
 
             if (conf < DETECTOR__CONF_THRESH):
                 object.geometric_centroid.x = np.nan

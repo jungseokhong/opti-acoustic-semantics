@@ -18,12 +18,18 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-sys.path.append("/home/beantown/ran/llm-mapping")
+# sys.path.append("/home/beantown/ran/llm-mapping")
+sys.path.append("/home/jungseok/git/llm-mapping")
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
 
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
+
+# OPENAI_API_BASE = 
+# OPENAI_API_KEY = 
+# os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
+# os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY 
 
 def generate_unique_colors(num_colors):
     hsv_colors = [(i * 180 // num_colors, 255, 255) for i in range(num_colors)]  # Generate colors with maximum saturation and value
@@ -285,7 +291,8 @@ class Compare2DMapAndImage:
         current_time = datetime.datetime.now()
         time_string = current_time.strftime("%Y%m%d_%H%M%S")
 
-        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        # output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        output_dir = Path("/home/jungseok/data/llm_data/rosbag_output/")
 
         output_path = output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
@@ -302,7 +309,8 @@ class Compare2DMapAndImage:
         import json
         from pathlib import Path
         # self.json_out.append(json_out)
-        output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        # output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
+        output_dir = Path("/home/jungseok/data/llm_data/rosbag_output/")
         name = json_out["image_idx"][:-4] + ".json"
         with open(output_dir / name, "w") as f:
             json.dump(json_out, f, indent=4)
