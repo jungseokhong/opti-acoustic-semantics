@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 from pathlib import Path
 
@@ -19,14 +22,11 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-# sys.path.append("/home/beantown/ran/llm-mapping")
-sys.path.append("/home/jungseok/git/llm-mapping")
+sys.path.append(os.environ['LLM_MAPPING'])
+
+
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
-
-OPENAI_API_BASE = "https://api.openai.com/v1"
-os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
-
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
@@ -37,13 +37,11 @@ def generate_unique_colors(num_colors):
     bgr_colors = [cv2.cvtColor(np.uint8([[hsv]]), cv2.COLOR_HSV2BGR)[0][0] for hsv in hsv_colors]
     return [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
 
-
 class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        #self.output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
-        self.output_dir = Path("/home/jungseok/data/llm_data/rosbag_output/")
+        self.output_dir = Path(os.environ['DATASETS']) /  "llm_data/rosbag_output_3"
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
@@ -263,23 +261,24 @@ class Compare2DMapAndImage:
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
                 color = class_to_color[i]
                 # Calculate top-left and bottom-right corners
-                top_left = (x - scaled_width // 2, y - scaled_height // 2)
-                bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
+                tlx = x- scaled_width // 2 if x- scaled_width //2 > 0 else 0
+                tly = y - scaled_height // 2 if y - scaled_height // 2 > 0 else 0
+                brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width
+                bry = y + scaled_height // 2 if y + scaled_height // 2 <  self.img_height else self.img_height
+
+                # top_left = (x - scaled_width // 2, y - scaled_height // 2)
+                # bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
 
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
-                cv2.rectangle(projected_image, (x-10,y-10), (x+10, y+10), (255,255,255), -1)
-                cv2.rectangle(projected_image, top_left, bottom_right, color, -1)  # Green box
+                cv2.rectangle(projected_image, (tlx, tly), (tlx+20, tly+20), color, -1)
+                cv2.rectangle(projected_image, (tlx, tly), (brx,bry), color, 2)
 
-                tx = x if x > 10 else 10
-                tx = x if x < self.img_width - 10 else self.img_width - 10
-                ty = y if y > 20 else 20
-                ty = y if y < self.img_height - 20 else self.img_height - 20
-
-                cv2.putText(projected_image, str(i),(tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                             (0, 0, 0), 2)
-                alpha =0.15
+                alpha =0.3
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+                cv2.putText(projected_image, str(i), (tlx, tly+20), cv2.FONT_HERSHEY_DUPLEX, 0.8,
+                            (0, 0, 0), 1)
                 #cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
                 # cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                 #             (255, 255, 255), 1)
