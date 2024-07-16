@@ -40,7 +40,19 @@ $ pip install opencv-python
 $ pip install git+https://github.com/lucasb-eyer/pydensecrf.git
 $ conda install -c anaconda scikit-learn
 ```
+## How to set up the env path for the VLM_fILTER 
+1. Create a ".env" file in ~/opti-acoustic-semantics/opti-acoustic-semantics.
+2. Set up the correct paths in the .env file.
+```
+OPENAI_API_BASE="https://api.openai.com/v1"
+OPENAI_API_KEY=""
+ 
+MODEL=/home/beantown/models
+DATASETS=/home/beantown/datasets
 
+LLM_MAPPING=/home/beantown/git/llm-mapping
+DINO=/home/beantown/git/Grounded-Segment-Anything/GroundingDINO
+```
 
 ## LLM SLAM
 
