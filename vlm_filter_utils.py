@@ -16,10 +16,10 @@ class vision_filter(PrefixProto):
       - output examples 2: unmatched_tags = []
       - output examples 3: unmatched_tags = [ 0, 4, 5, 6]
     """
-#bbox filstering
-#mode - > Step
+# bbox filstering
+# mode - > Step
 
-#filtering  using the object list
+# filtering  using the object list
 #     system_prompt = """
 #     Objective: Filter out incorrect tags in the image.
 #
@@ -51,28 +51,28 @@ class vision_filter(PrefixProto):
 # Determine which tags do not correctly correspond to the objects within their bounding box areas. An incorrect tag could be one that does not accurately match the object within the bounding box. If multiple tags of the same object type exist but only one is present in the image, filter out the less accurate tag.
 # Return ONLY the results in the following format: error = ['incorrect_tag1', 'incorrect_tag2', ...], tag_numbers = ['tag number of incorrect_tag1', 'tag number of incorrect_tag2', ...]
 #     """
-    # system_prompt = """
-    # Please review the given image and the list of objects. Identify and filter out any tags that are not present in the image or are incorrect. Return the results in the following format:
-    # error = ['incorrect_tag1', 'incorrect_tag2', ...]
-    # """
-    #system_prompt = """
-    # a user will be given a list of objects that are supposed to be in a photo. Your task is to determine if all the objects in the list are present in the photo.
-    #
-    # Respond according to the following format:
-    # 1. If there are objects in the list that are not present in the photo:
-    #    - user: List of objects=['object1', 'object2', ...]
-    #    - system: Error=['object1', 'object2', ...]
-    #
-    # 2. If all objects in the list are present in the photo:
-    #    - user: List of objects=['object1', 'object2', ...]
-    #    - system: Error=[]
-    #
-    # Example 1:
-    # - yser: List of objects = ['person', 'sky']
-    # - system: Error=[]
-    # Example 2:
-    # -  yser: List of objects = ['person', 'sky', 'tree']
-    # - system: Error=[tree]
-    #
-    # Now, let's start:
-    # """
+# system_prompt = """
+# Please review the given image and the list of objects. Identify and filter out any tags that are not present in the image or are incorrect. Return the results in the following format:
+# error = ['incorrect_tag1', 'incorrect_tag2', ...]
+# """
+# system_prompt = """
+# a user will be given a list of objects that are supposed to be in a photo. Your task is to determine if all the objects in the list are present in the photo.
+#
+# Respond according to the following format:
+# 1. If there are objects in the list that are not present in the photo:
+#    - user: List of objects=['object1', 'object2', ...]
+#    - system: Error=['object1', 'object2', ...]
+#
+# 2. If all objects in the list are present in the photo:
+#    - user: List of objects=['object1', 'object2', ...]
+#    - system: Error=[]
+#
+# Example 1:
+# - yser: List of objects = ['person', 'sky']
+# - system: Error=[]
+# Example 2:
+# -  yser: List of objects = ['person', 'sky', 'tree']
+# - system: Error=[tree]
+#
+# Now, let's start:
+# """

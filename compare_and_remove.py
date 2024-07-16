@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import os
@@ -23,11 +24,13 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-sys.path.append(os.environ['LLM_MAPPING'])
 
+sys.path.append(os.environ['LLM_MAPPING'])
 
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
+
+
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
@@ -38,11 +41,12 @@ def generate_unique_colors(num_colors):
     bgr_colors = [cv2.cvtColor(np.uint8([[hsv]]), cv2.COLOR_HSV2BGR)[0][0] for hsv in hsv_colors]
     return [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
 
+
 class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path(os.environ['DATASETS']) /  "llm_data/rosbag_output_bbox"
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox"
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
@@ -134,8 +138,6 @@ class Compare2DMapAndImage:
         # Project landmarks to the image
         projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
                                                        landmark_widths, landmark_heights, img=yoloimg_cv)
-
-
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -233,7 +235,6 @@ class Compare2DMapAndImage:
         points_2d_homo = self.K @ RT @ homogeneous_points
         # print(points_2d_homo.shape, points_2d_homo.T)
 
-
         # Initialize a blank image
         if img is not None and img.size > 0:
             projected_image = img.copy()
@@ -262,26 +263,26 @@ class Compare2DMapAndImage:
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
                 color = class_to_color[i]
                 # Calculate top-left and bottom-right corners
-                tlx = x- scaled_width // 2 if x- scaled_width //2 >= 0 else 0
+                tlx = x - scaled_width // 2 if x - scaled_width // 2 >= 0 else 0
                 tly = y - scaled_height // 2 if y - scaled_height // 2 >= 0 else 0
                 brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
-                bry = y + scaled_height // 2 if y + scaled_height // 2 <  self.img_height else self.img_height - 1
+                bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
 
                 # top_left = (x - scaled_width // 2, y - scaled_height // 2)
                 # bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
 
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
-                cv2.rectangle(projected_image, (tlx, tly), (tlx+30, tly+20), color, -1)
-                cv2.rectangle(projected_image, (tlx, tly), (brx,bry), color, 2)
+                cv2.rectangle(projected_image, (tlx, tly), (tlx + 30, tly + 20), color, -1)
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)
 
-                alpha =0.3
+                alpha = 0.3
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
                 tag_name = f"[{i}]"
-                cv2.putText(projected_image, tag_name, (tlx, tly+20), cv2.FONT_HERSHEY_DUPLEX, 0.6,
+                cv2.putText(projected_image, tag_name, (tlx, tly + 20), cv2.FONT_HERSHEY_DUPLEX, 0.6,
                             (0, 0, 0), 1)
-                #cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
+                # cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
                 # cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                 #             (255, 255, 255), 1)
 
@@ -293,10 +294,9 @@ class Compare2DMapAndImage:
                            }
                 obj.append(obj_dic)
 
-
         self.vlm_cls_input = [d["label"] for d in obj]
         self.vlm_cls_input_num = [d["i"] for d in obj]
-        #print(self.vlm_cls_input)
+        # print(self.vlm_cls_input)
 
         if self.save_projections:
             self.frame_num += 1
@@ -366,7 +366,7 @@ class Compare2DMapAndImage:
 
         print("frame : ", self.frame_num)
         print("tags :", self.vlm_cls_input, self.vlm_cls_input_num)
-        self.vlm_cls_input = [] #in order to prevent calling vlm repeatedly with the same input
+        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
         ###read a json file
         f = open(self.output_dir / "{:05d}_ori.json".format(self.frame_num))
@@ -393,10 +393,11 @@ class Compare2DMapAndImage:
             list_from_string = re.sub(r'(\w+)', r'"\1"', list_from_string)
             list_from_string = literal_eval(list_from_string)
             print(f"remove : {list_from_string}")
-            list_from_string = vlm_cls_input_num[0] # Todo: in order to avoid the error temporally, remove this line later
+            # list_from_string = vlm_cls_input_num[
+            #    0]  # Todo: in order to avoid the error temporally, remove this line later
 
-        list_from_string = [ vlm_cls_input[vlm_cls_input_num.index(int(i))] for i in list_from_string ] #replace a cls id to a cls name
-
+        list_from_string = [vlm_cls_input[vlm_cls_input_num.index(int(i))] for i in
+                            list_from_string]  # replace a cls id to a cls name
 
         print("remove : ", list_from_string)
         #
