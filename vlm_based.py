@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 import pathlib
 from typing import Literal
@@ -82,12 +85,9 @@ class ClosedSetDetector:
 
         if method == "ram":
             import sys
-            # sys.path.append("/home/beantown/ran/llm-mapping")
-            # sys.path.append("/home/beantown/ran/Grounded-Segment-Anything/GroundingDINO")
-            sys.path.append("/home/jungseok/git/llm-mapping")
-            sys.path.append("/home/jungseok/git/Grounded-Segment-Anything/GroundingDINO")
+            sys.path.append(os.environ['LLM_MAPPING'])
+            sys.path.append(os.environ['DINO'])
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
-
             # setting up
             GraundedSamArgs.visualize_SAM = False  # todo uss GPU!
             self.models = load_models()

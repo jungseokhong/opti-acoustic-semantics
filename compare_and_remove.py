@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import os
 from pathlib import Path
+import json
 
 import message_filters
 import numpy as np
@@ -19,21 +24,16 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-# sys.path.append("/home/beantown/ran/llm-mapping")
-sys.path.append("/home/jungseok/git/llm-mapping")
+
+sys.path.append(os.environ['LLM_MAPPING'])
+
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
 
-OPENAI_API_BASE = "https://api.openai.com/v1"
-os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
 
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
 
-# OPENAI_API_BASE = 
-# OPENAI_API_KEY = 
-# os.environ['OPENAI_API_BASE'] = OPENAI_API_BASE
-# os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY 
 
 def generate_unique_colors(num_colors):
     hsv_colors = [(i * 180 // num_colors, 255, 255) for i in
@@ -46,8 +46,7 @@ class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        #self.output_dir = Path("/home/beantown/datasets/llm_data/rosbag_output/")
-        self.output_dir = Path("/home/jungseok/data/llm_data/rosbag_output/")
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox"
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
@@ -139,8 +138,6 @@ class Compare2DMapAndImage:
         # Project landmarks to the image
         projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
                                                        landmark_widths, landmark_heights, img=yoloimg_cv)
-
-
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -238,7 +235,6 @@ class Compare2DMapAndImage:
         points_2d_homo = self.K @ RT @ homogeneous_points
         # print(points_2d_homo.shape, points_2d_homo.T)
 
-
         # Initialize a blank image
         if img is not None and img.size > 0:
             projected_image = img.copy()
@@ -251,7 +247,6 @@ class Compare2DMapAndImage:
         # Iterate over each projected point
         json_out = {}
         obj = []
-        self.vlm_cls_input = []
         for i, (point_3d, point_2d) in enumerate(zip(landmark_points, points_2d_homo.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
@@ -268,30 +263,48 @@ class Compare2DMapAndImage:
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
                 color = class_to_color[i]
                 # Calculate top-left and bottom-right corners
-                top_left = (x - scaled_width // 2, y - scaled_height // 2)
-                bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
+                tlx = x - scaled_width // 2 if x - scaled_width // 2 >= 0 else 0
+                tly = y - scaled_height // 2 if y - scaled_height // 2 >= 0 else 0
+                brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
+                bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
+
+                # top_left = (x - scaled_width // 2, y - scaled_height // 2)
+                # bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
 
                 # Draw the bounding box
-                cv2.rectangle(projected_image, top_left, bottom_right, color, 2)  # Green box
+                pre_projected = projected_image.copy()
+                cv2.rectangle(projected_image, (tlx, tly), (tlx + 30, tly + 20), color, -1)
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)
 
-                cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
-                cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                            (255, 255, 255), 1)
+                alpha = 0.3
+                projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+                tag_name = f"[{i}]"
+                cv2.putText(projected_image, tag_name, (tlx, tly + 20), cv2.FONT_HERSHEY_DUPLEX, 0.6,
+                            (0, 0, 0), 1)
+                # cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
+                # cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                #             (255, 255, 255), 1)
 
                 obj_dic = {"label": landmark_classes[i],
                            "x": x,
                            "y": y,
-                           "z": Z
+                           "z": Z,
+                           "i": i
                            }
                 obj.append(obj_dic)
-                self.vlm_cls_input.append(landmark_classes[i])
 
-            if self.save_projections:
-                self.frame_num += 1
-                json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-                json_out["contents"] = obj
-                self.save_img(img, projected_image)
-                self.save_json(json_out)
+        self.vlm_cls_input = [d["label"] for d in obj]
+        self.vlm_cls_input_num = [d["i"] for d in obj]
+        # print(self.vlm_cls_input)
+
+        if self.save_projections:
+            self.frame_num += 1
+            json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+            json_out["contents"] = obj
+
+            self.save_img(img, projected_image)
+            self.save_json(json_out)
 
         self.vlm_img_input = img
         return projected_image
@@ -308,7 +321,6 @@ class Compare2DMapAndImage:
         cv2.imwrite(str(_output_path), projected_image)
 
     def save_json(self, json_out):
-        import json
         name = json_out["image_idx"][:-4] + ".json"
         with open(self.output_dir / name, "w") as f:
             json.dump(json_out, f, indent=4)
@@ -349,25 +361,51 @@ class Compare2DMapAndImage:
             print(self.vlm_cls_input)
             return [-1]
 
+        vlm_cls_input_num = self.vlm_cls_input_num
+        vlm_cls_input = self.vlm_cls_input
+
         print("frame : ", self.frame_num)
-        #self.frame_num += 1  # increase frame number saving only
-        print("tags :", self.vlm_cls_input)
+        print("tags :", self.vlm_cls_input, self.vlm_cls_input_num)
+        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
+
+        ###read a json file
+        f = open(self.output_dir / "{:05d}_ori.json".format(self.frame_num))
+        data = json.load(f)
+
+        ##edit a text input
+        txt_input = []
+        for cls_name, cls_num in zip(self.vlm_cls_input, self.vlm_cls_input_num):
+            txt_input.append(f"{cls_name}: {cls_num}")
+        txt_input = ", ".join(txt_input)
+        print(f"text input : {txt_input}")
 
         self.vlm_filter.reset_memory()
-        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_img_input, self.vlm_cls_input, self.client)
+        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_img_input, txt_input, self.client)
         str_response = return_str(vlm_response)
 
-        # Extract the part of the string that represents the list
+        ## Extract the part of the string that represents the list
         list_from_string = str_response.split('=')[-1].strip()
+
         try:
             list_from_string = literal_eval(list_from_string)
         except:
             import re
             list_from_string = re.sub(r'(\w+)', r'"\1"', list_from_string)
             list_from_string = literal_eval(list_from_string)
+            print(f"remove : {list_from_string}")
+            # list_from_string = vlm_cls_input_num[
+            #    0]  # Todo: in order to avoid the error temporally, remove this line later
+
+        list_from_string = [vlm_cls_input[vlm_cls_input_num.index(int(i))] for i in
+                            list_from_string]  # replace a cls id to a cls name
 
         print("remove : ", list_from_string)
-        self.vlm_cls_input = []
+        #
+
+        ##save it to json file
+        json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
+        data["vlm_filter"] = json_out
+        self.save_json(data)
 
         return self.get_class_index(list_from_string)
 
@@ -396,4 +434,4 @@ if __name__ == "__main__":
         success = detector.call_remove_class_service(class_id)
         rospy.loginfo("Service call success: %s" % success)
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(10)  # Simulate processing time 10
+        rospy.sleep(7)  # Simulate processing time 10
