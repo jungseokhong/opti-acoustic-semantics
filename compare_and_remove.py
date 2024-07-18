@@ -291,23 +291,21 @@ class Compare2DMapAndImage:
                            "y": y,
                            "z": Z,
                            "i": i,
-                           "landmark_key": landmark_key
+                           "landmark_key": str(landmark_key)
                            }
                 obj.append(obj_dic)
 
-        self.vlm_cls_key = [d["landmark_key"] for d in obj]  # key
+        self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
         self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
-        # print(self.vlm_cls_input)
 
-        #obj["landmark_key"]  = [str(d)  for d in self.vlm_cls_key]
         if self.save_projections:
             self.frame_num += 1
             json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
             json_out["contents"] = obj
 
             self.save_img(img, projected_image)
-            #self.save_json(json_out)
+            self.save_json(json_out)
 
         self.vlm_img_input = projected_image
         return projected_image
