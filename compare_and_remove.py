@@ -175,6 +175,8 @@ class Compare2DMapAndImage:
             landmark_classes.append(map_info.landmark_classes[i])
             landmark_widths.append(map_info.landmark_widths[i])
             landmark_heights.append(map_info.landmark_heights[i])
+            landmark_keys.append(map_info.landmark_keys[i])
+
 
         orientation_data.append(map_info.pose.orientation.x)
         orientation_data.append(map_info.pose.orientation.y)
@@ -298,13 +300,14 @@ class Compare2DMapAndImage:
         self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
         # print(self.vlm_cls_input)
 
+        #obj["landmark_key"]  = [str(d)  for d in self.vlm_cls_key]
         if self.save_projections:
             self.frame_num += 1
             json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
             json_out["contents"] = obj
 
             self.save_img(img, projected_image)
-            self.save_json(json_out)
+            #self.save_json(json_out)
 
         self.vlm_img_input = projected_image
         return projected_image
@@ -353,13 +356,19 @@ class Compare2DMapAndImage:
             return [-1]  # Returns -1 if the class is not found
 
     def get_model_output(self):
+        #
+        # if self.classstring == "":
+        #     return [-1]
+        #
+        # if self.vlm_cls_input == []:
+        #     return [-1]
+        if self.frame_num < 1:
+            return 0
+        if len(self.vlm_cls_input) < 1:
+            print("no landmark")
+            return 0
 
-        if self.classstring == "":
-            return [-1]
-
-        if self.vlm_cls_input == []:
-            return [-1]
-
+        # copy necessary vars
         frame_num = self.frame_num
         vlm_cls_input_idx = self.vlm_cls_input_idx
         vlm_cls_input = self.vlm_cls_input
@@ -369,8 +378,6 @@ class Compare2DMapAndImage:
         print("frame : ", frame_num)
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
         self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
-
-
 
         ##edit a text input
         txt_input = []
@@ -392,14 +399,16 @@ class Compare2DMapAndImage:
         try:
             # replace a cls id to a cls name
             list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
-                            list_from_idx]
-            # replace a cls id to a key
-            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                              list_from_idx]
+                                list_from_idx]
+
+
         except:
             print(f"\nerror during extract the result list..{list_from_string}\n")
             list_from_string = []  # prevent the program from stopping
+
         print("remove : ", list_from_string)
+
+        print(self.landmark_keys, vlm_cls_key, vlm_cls_input_idx, list_from_idx)
 
         ##save it to json file
         f = open(self.output_dir / "{:05d}_ori.json".format(frame_num))
@@ -408,7 +417,10 @@ class Compare2DMapAndImage:
         data["vlm_filter"] = json_out
         self.save_json(data)
 
-        return self.get_class_index(list_from_string)
+        # replace a cls id to a key
+        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                              list_from_idx]
+
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
         try:
@@ -440,7 +452,7 @@ if __name__ == "__main__":
     detector = Compare2DMapAndImage()
 
     while not rospy.is_shutdown():
-        # class_id = detector.get_model_output()
+        detector.get_model_output()
         # rospy.loginfo("Calling service to remove class ID: %d" % class_id)
         # success = detector.call_remove_class_service(class_id)
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
