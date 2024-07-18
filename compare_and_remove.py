@@ -306,7 +306,7 @@ class Compare2DMapAndImage:
             self.save_img(img, projected_image)
             self.save_json(json_out)
 
-        self.vlm_img_input = img
+        self.vlm_img_input = projected_image
         return projected_image
 
     def save_img(self, img, projected_image):
