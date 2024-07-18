@@ -272,9 +272,6 @@ class Compare2DMapAndImage:
                 brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
                 bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
 
-                # top_left = (x - scaled_width // 2, y - scaled_height // 2)
-                # bottom_right = (x + scaled_width // 2, y + scaled_height // 2)
-
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
                 cv2.rectangle(projected_image, (tlx, tly), (tlx + 30, tly + 20), color, -1)
@@ -284,11 +281,8 @@ class Compare2DMapAndImage:
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
                 tag_name = f"[{i}]"
-                cv2.putText(projected_image, tag_name, (tlx, tly + 20), cv2.FONT_HERSHEY_DUPLEX, 0.6,
+                cv2.putText(projected_image, tag_name, (tlx, tly + 18), cv2.FONT_HERSHEY_DUPLEX, 0.6,
                             (0, 0, 0), 1)
-                # cv2.circle(projected_image, (x, y), 4, color, -1)  # Green dot
-                # cv2.putText(projected_image, landmark_classes[i], (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                #             (255, 255, 255), 1)
 
                 obj_dic = {"label": landmark_classes[i],
                            "x": x,
@@ -364,53 +358,57 @@ class Compare2DMapAndImage:
             return [-1]
 
         if self.vlm_cls_input == []:
-            print(self.vlm_cls_input)
             return [-1]
 
+        frame_num = self.frame_num
         vlm_cls_input_idx = self.vlm_cls_input_idx
         vlm_cls_input = self.vlm_cls_input
         vlm_cls_key = self.vlm_cls_key
+        vlm_img_input = self.vlm_img_input.copy()
 
-        print("frame : ", self.frame_num)
-        print("tags :", self.vlm_cls_input, self.vlm_cls_input_num)
+        print("frame : ", frame_num)
+        print("tags :", vlm_cls_input, vlm_cls_input_idx)
         self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
-        ###read a json file
-        f = open(self.output_dir / "{:05d}_ori.json".format(self.frame_num))
-        data = json.load(f)
+
 
         ##edit a text input
         txt_input = []
-        for cls_name, cls_num in zip(self.vlm_cls_input, self.vlm_cls_input_num):
+        for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
             txt_input.append(f"{cls_name}: {cls_num}")
         txt_input = ", ".join(txt_input)
         print(f"text input : {txt_input}")
 
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+
         self.vlm_filter.reset_memory()
-        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(self.vlm_img_input, txt_input, self.client)
+        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
         str_response = return_str(vlm_response)
 
         ## Extract the part of the string that represents the list
         list_from_idx = str_response.split('=')[-1].strip()
         list_from_idx = literal_eval(list_from_idx)
 
-        # replace a cls id to a cls name
-        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+        try:
+            # replace a cls id to a cls name
+            list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
                             list_from_idx]
-        #replace a cls id to a key
-        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                            list_from_idx]
-
+            # replace a cls id to a key
+            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                              list_from_idx]
+        except:
+            print(f"\nerror during extract the result list..{list_from_string}\n")
+            list_from_string = []  # prevent the program from stopping
         print("remove : ", list_from_string)
 
         ##save it to json file
+        f = open(self.output_dir / "{:05d}_ori.json".format(frame_num))
+        data = json.load(f)
         json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
         data["vlm_filter"] = json_out
         self.save_json(data)
 
-        # remove landmarks
-
-
+        return self.get_class_index(list_from_string)
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
         try:
@@ -451,4 +449,4 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time
+        rospy.sleep(7)  # Simulate processing time 10
