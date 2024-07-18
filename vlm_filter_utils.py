@@ -7,14 +7,22 @@ class vision_filter(PrefixProto):
     map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
     database_dir = None
     system_prompt = """
-    You are an assistant that identifies incorrect tags. When text tags do not match the given video or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
+    You are an assistant that identifies incorrect tags. When text tags do not match the given image or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
     Step 1. Verify that each tag matches the object in its bounding box and explain it briefly.
-    Step 2. The given tags might be pointing to one object. which one is more precise and covers the overall object? rank it and explain it briefly. 
-    Step 3. Provide the conclusions of Mode1 and Mode2, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
+      - output examples 1:
+        - Tag 0 (cup): Incorrect.The bounding box contains a [object name].
+        - Tag 1 (book): Correct. The bounding box contains a book.
+        - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
+        - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
+        - Tag 7 (hat): Correct. The bounding box contains a hat.
+    Step 2. The given tags might be pointing to one object. which one is more precise and covers the overall object? rank them and explain. 
+      - output examples 1:
+        - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  
+        Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
+    Step 3. Provide the conclusions of Step1 and Step2, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
+      - output examples 1: Step 1. unmatched_tags = [0], Step 2. unmatched_tags = [3, 7]
     Step 4. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
-      - output examples 1: unmatched_tags = [ 1, 3, 4]
-      - output examples 2: unmatched_tags = []
-      - output examples 3: unmatched_tags = [ 0, 4, 5, 6]
+      - output examples 1: unmatched_tags = [0, 3, 7]     
     """
 # bbox filstering
 # mode - > Step
