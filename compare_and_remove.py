@@ -19,6 +19,7 @@ from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image as RosImage
 from scipy.spatial.transform import Rotation as R
 from semanticslam_ros.srv import RemoveClass, RemoveClassRequest
+from semanticslam_ros.srv import RemoveLandmark, RemoveLandmarkRequest
 from ast import literal_eval
 
 from vlm_filter_utils import vision_filter
@@ -64,6 +65,7 @@ class Compare2DMapAndImage:
         self.min_time_diff = 10
         self.classlist = []
         self.classstring = ""
+        self.landmark_keys = []  # stores keys to remove landmarks
 
         self.num_classes = 20  # Example: Specify the number of classes
         self.colors = generate_unique_colors(self.num_classes)  # Generate unique colors for these classes
@@ -133,11 +135,11 @@ class Compare2DMapAndImage:
         # print(map_info)
 
         # Extract data from map_info
-        position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights = self.parse_data(
+        position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, landmark_keys = self.parse_data(
             map_info)
         # Project landmarks to the image
         projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
-                                                       landmark_widths, landmark_heights, img=yoloimg_cv)
+                                                       landmark_widths, landmark_heights, landmark_keys, img=yoloimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -163,6 +165,7 @@ class Compare2DMapAndImage:
         orientation_data = []
         landmark_widths = []
         landmark_heights = []
+        landmark_keys = []
 
         num_landmarks = len(map_info.landmark_points)
         for i in range(num_landmarks):
@@ -189,13 +192,14 @@ class Compare2DMapAndImage:
         orientation_array = np.array(orientation_data)
         landmark_widths_array = np.array(landmark_widths)
         landmark_heights_array = np.array(landmark_heights)
+        landmark_keys_array = np.array(landmark_keys)
         # Reorder the orientation array
         # orientation_array = np.roll(orientation_array, -3) # for w,x,y,z convention
 
-        return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array
+        return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array, landmark_keys_array
 
     def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, landmark_widths,
-                                landmark_heights, img=None):
+                                landmark_heights, landmark_keys, img=None):
 
         # Quaternion to rotation matrix conversion
         q = orientation
@@ -247,7 +251,7 @@ class Compare2DMapAndImage:
         # Iterate over each projected point
         json_out = {}
         obj = []
-        for i, (point_3d, point_2d) in enumerate(zip(landmark_points, points_2d_homo.T)):
+        for i, (point_3d, landmark_key, point_2d) in enumerate(zip(landmark_points, landmark_keys, points_2d_homo.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
@@ -290,12 +294,14 @@ class Compare2DMapAndImage:
                            "x": x,
                            "y": y,
                            "z": Z,
-                           "i": i
+                           "i": i,
+                           "landmark_key": landmark_key
                            }
                 obj.append(obj_dic)
 
-        self.vlm_cls_input = [d["label"] for d in obj]
-        self.vlm_cls_input_num = [d["i"] for d in obj]
+        self.vlm_cls_key = [d["landmark_key"] for d in obj]  # key
+        self.vlm_cls_input = [d["label"] for d in obj]  # class name
+        self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
         # print(self.vlm_cls_input)
 
         if self.save_projections:
@@ -361,8 +367,9 @@ class Compare2DMapAndImage:
             print(self.vlm_cls_input)
             return [-1]
 
-        vlm_cls_input_num = self.vlm_cls_input_num
+        vlm_cls_input_idx = self.vlm_cls_input_idx
         vlm_cls_input = self.vlm_cls_input
+        vlm_cls_key = self.vlm_cls_key
 
         print("frame : ", self.frame_num)
         print("tags :", self.vlm_cls_input, self.vlm_cls_input_num)
@@ -384,30 +391,25 @@ class Compare2DMapAndImage:
         str_response = return_str(vlm_response)
 
         ## Extract the part of the string that represents the list
-        list_from_string = str_response.split('=')[-1].strip()
+        list_from_idx = str_response.split('=')[-1].strip()
+        list_from_idx = literal_eval(list_from_idx)
 
-        try:
-            list_from_string = literal_eval(list_from_string)
-        except:
-            import re
-            list_from_string = re.sub(r'(\w+)', r'"\1"', list_from_string)
-            list_from_string = literal_eval(list_from_string)
-            print(f"remove : {list_from_string}")
-            # list_from_string = vlm_cls_input_num[
-            #    0]  # Todo: in order to avoid the error temporally, remove this line later
-
-        list_from_string = [vlm_cls_input[vlm_cls_input_num.index(int(i))] for i in
-                            list_from_string]  # replace a cls id to a cls name
+        # replace a cls id to a cls name
+        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+                            list_from_idx]
+        #replace a cls id to a key
+        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                            list_from_idx]
 
         print("remove : ", list_from_string)
-        #
 
         ##save it to json file
         json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
         data["vlm_filter"] = json_out
         self.save_json(data)
 
-        return self.get_class_index(list_from_string)
+        # remove landmarks
+
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
@@ -423,15 +425,30 @@ class Compare2DMapAndImage:
             rospy.logerr("Service call failed: %s" % e)
             return False
 
+    def call_remove_landmark_service(self, landmark_key):
+        rospy.wait_for_service('remove_landmark')
+        try:
+            remove_landmark = rospy.ServiceProxy('remove_landmark', RemoveLandmark)
+            req = RemoveLandmarkRequest(landmark_key=landmark_key)
+            res = remove_landmark(req)
+            return res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
+
 
 if __name__ == "__main__":
     rospy.init_node("landmarks_comparison_and_removal")
     detector = Compare2DMapAndImage()
 
     while not rospy.is_shutdown():
-        class_id = detector.get_model_output()
-        rospy.loginfo(f"Calling service to remove class ID: {class_id}")
-        success = detector.call_remove_class_service(class_id)
-        rospy.loginfo("Service call success: %s" % success)
+        # class_id = detector.get_model_output()
+        # rospy.loginfo("Calling service to remove class ID: %d" % class_id)
+        # success = detector.call_remove_class_service(class_id)
+        rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
+        for landmark_key in detector.landmark_keys:
+            success = detector.call_remove_landmark_service(landmark_key)
+            rospy.loginfo("Service call success: %s" % success)
+        detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time 10
+        rospy.sleep(7)  # Simulate processing time
