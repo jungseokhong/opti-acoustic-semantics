@@ -177,7 +177,6 @@ class Compare2DMapAndImage:
             landmark_heights.append(map_info.landmark_heights[i])
             landmark_keys.append(map_info.landmark_keys[i])
 
-
         orientation_data.append(map_info.pose.orientation.x)
         orientation_data.append(map_info.pose.orientation.y)
         orientation_data.append(map_info.pose.orientation.z)
@@ -362,6 +361,7 @@ class Compare2DMapAndImage:
         #     return [-1]
         if self.frame_num < 1:
             return 0
+
         if len(self.vlm_cls_input) < 1:
             print("no landmark")
             return 0
@@ -382,8 +382,9 @@ class Compare2DMapAndImage:
         for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
             txt_input.append(f"{cls_name}: {cls_num}")
         txt_input = ", ".join(txt_input)
-        print(f"text input : {txt_input}")
+        print(f"[text input] {txt_input}")
 
+        # save an input img
         cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
 
         self.vlm_filter.reset_memory()
@@ -392,21 +393,21 @@ class Compare2DMapAndImage:
 
         ## Extract the part of the string that represents the list
         list_from_idx = str_response.split('=')[-1].strip()
-        list_from_idx = literal_eval(list_from_idx)
 
         try:
-            # replace a cls id to a cls name
-            list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
-                                list_from_idx]
-
-
+            list_from_idx = literal_eval(list_from_idx)
         except:
-            print(f"\nerror during extract the result list..{list_from_string}\n")
-            list_from_string = []  # prevent the program from stopping
+            print(f"\nerror during extract the result list..{list_from_idx}\n")
+            list_from_idx = []  # prevent the program from stopping
+
+        # replace a cls id to a cls name
+        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+                            list_from_idx]
+        # replace a cls id to a key
+        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                              list_from_idx]
 
         print("remove : ", list_from_string)
-
-        print(self.landmark_keys, vlm_cls_key, vlm_cls_input_idx, list_from_idx)
 
         ##save it to json file
         f = open(self.output_dir / "{:05d}_ori.json".format(frame_num))
@@ -414,10 +415,6 @@ class Compare2DMapAndImage:
         json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
         data["vlm_filter"] = json_out
         self.save_json(data)
-
-        # replace a cls id to a key
-        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                              list_from_idx]
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
@@ -451,8 +448,6 @@ if __name__ == "__main__":
 
     while not rospy.is_shutdown():
         detector.get_model_output()
-        # rospy.loginfo("Calling service to remove class ID: %d" % class_id)
-        # success = detector.call_remove_class_service(class_id)
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
         for landmark_key in detector.landmark_keys:
             success = detector.call_remove_landmark_service(landmark_key)
