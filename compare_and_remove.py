@@ -99,6 +99,13 @@ class Compare2DMapAndImage:
         self.client = OpenAI()
         self.vlm_filter = vision_agent(vision_filter)
 
+        #####comparison set
+        self.compare_promts = False
+        if self.compare_promts:
+            from vlm_filter_utils import vision_another_filter
+            self.vlm_filter_com = vision_agent(vision_another_filter)
+            self.output_com_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_comp"
+
     def camera_info_callback(self, cam_info: CameraInfo):
         # Update camera intrinsic matrix K
         fx = cam_info.K[0]
@@ -276,13 +283,13 @@ class Compare2DMapAndImage:
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
                 cv2.rectangle(projected_image, (tlx, tly), (tlx + 30, tly + 20), color, -1)
-                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
 
-                alpha = 0.3
+                alpha = 0.4
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
                 tag_name = f"[{i}]"
-                cv2.putText(projected_image, tag_name, (tlx, tly + 18), cv2.FONT_HERSHEY_DUPLEX, 0.6,
+                cv2.putText(projected_image, tag_name, (tlx, tly + 18), cv2.FONT_HERSHEY_DUPLEX, 0.3,
                             (0, 0, 0), 1)
 
                 obj_dic = {"label": landmark_classes[i],
@@ -300,11 +307,12 @@ class Compare2DMapAndImage:
 
         if self.save_projections:
             self.frame_num += 1
-            json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-            json_out["contents"] = obj
+            # json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+            json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
+            # json_out["contents"] = obj
 
             self.save_img(img, projected_image)
-            self.save_json(json_out)
+            self.save_json(json_out, self.output_dir)
 
         self.vlm_img_input = projected_image
         return projected_image
@@ -314,16 +322,27 @@ class Compare2DMapAndImage:
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
-        _output_path = output_path / "{:05d}.png".format(self.frame_num)
-        cv2.imwrite(str(_output_path), img)
+        #_output_path = output_path / "{:05d}.png".format(self.frame_num)
+        #cv2.imwrite(str(_output_path), img)
 
         _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), projected_image)
 
-    def save_json(self, json_out):
-        name = json_out["image_idx"][:-4] + ".json"
-        with open(self.output_dir / name, "w") as f:
-            json.dump(json_out, f, indent=4)
+    def save_json(self, json_out, output_dir):
+        # name = json_out["image_idx"][:-4] + ".json"
+        json_path = output_dir / "results.json"
+
+        if json_path.exists():
+            f = open(json_path)
+            data = json.load(f)
+        else:
+            data = {}
+
+        for key in json_out.keys():
+            data[key]  = json_out[key]
+
+        with open( json_path, "w") as f:
+            json.dump(data, f, indent=4)
 
     def combine_images(self, img1, img2):
         # Ensure both images are the same height
@@ -352,19 +371,66 @@ class Compare2DMapAndImage:
             print(f"Class '{class_name}' not found in class list.")
             return [-1]  # Returns -1 if the class is not found
 
+    def call_api(self, vlm_filter, vlm_img_input, txt_input):
+        vlm_filter.reset_memory()
+        vlm_response = vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
+        str_response = return_str(vlm_response)
+        return str_response
+
+    def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
+        ## Extract the part of the string that represents the list
+        list_from_idx = str_response.split('=')[-1].strip()
+
+        try:
+            list_from_idx = literal_eval(list_from_idx)
+        except:
+            print(f"\nerror during extract the result list..{list_from_idx}\n")
+            list_from_idx = []  # prevent the program from stopping
+
+        # replace a cls id to a cls name
+        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+                            list_from_idx]
+
+        return list_from_string, list_from_idx
+
+    def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir):
+        ##save it to json file
+        json_path = output_dir / "results.json"
+        if json_path.exists():
+            f = open(json_path)
+            data = json.load(f)
+        else:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            data = {"prompts": prompts.split('\n'), "{:05d}.png".format(frame_num) : {}}
+
+        if "prompts" not in data:
+            new_data ={}
+            new_data["prompts"] = prompts.split('\n')
+            for key in data.keys():
+                new_data[key] = data[key]
+            data = new_data
+
+        if "{:05d}.png".format(frame_num) not in data:
+            data["{:05d}.png".format(frame_num)] = {}
+
+        str_response = str_response.split('\n')
+        json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
+        data["{:05d}.png".format(frame_num)]["vlm_filter"] = json_out
+
+        with open( json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
     def get_model_output(self):
-        #
-        # if self.classstring == "":
-        #     return [-1]
-        #
-        # if self.vlm_cls_input == []:
-        #     return [-1]
+
         if self.frame_num < 1:
-            return 0
+            return True
 
         if len(self.vlm_cls_input) < 1:
             print("no landmark")
-            return 0
+            return True
+
+        # if self.frame_num not in [1,20,24,36,53,64,79,99,117,132,146,163,177,178]:
+        #     return True
 
         # copy necessary vars
         frame_num = self.frame_num
@@ -385,36 +451,47 @@ class Compare2DMapAndImage:
         print(f"[text input] {txt_input}")
 
         # save an input img
-        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        #cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
 
-        self.vlm_filter.reset_memory()
-        vlm_response = self.vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
-        str_response = return_str(vlm_response)
+        if not self.compare_promts:
+            self.vlm_filter.reset_memory()
+            str_response = self.call_api(self.vlm_filter, vlm_img_input, txt_input)
+            items_to_remove, idx_to_remove = self.return_landmarks_to_remove(str_response, vlm_cls_input,
+                                                                             vlm_cls_input_idx)
 
-        ## Extract the part of the string that represents the list
-        list_from_idx = str_response.split('=')[-1].strip()
+            # replace a cls id to a key
+            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                                  idx_to_remove]
 
-        try:
-            list_from_idx = literal_eval(list_from_idx)
-        except:
-            print(f"\nerror during extract the result list..{list_from_idx}\n")
-            list_from_idx = []  # prevent the program from stopping
+            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response, frame_num, items_to_remove, self.output_dir)
+            print("remove - experiment : ", items_to_remove)
+        else:  # multi-threading
+            from concurrent.futures import ThreadPoolExecutor
+            self.vlm_filter.reset_memory()
+            self.vlm_filter_com.reset_memory()
 
-        # replace a cls id to a cls name
-        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
-                            list_from_idx]
-        # replace a cls id to a key
-        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                              list_from_idx]
+            cond1 = {"vlm_filter": self.vlm_filter, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
+            cond2 = {"vlm_filter": self.vlm_filter_com, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
+            with ThreadPoolExecutor() as executor:
+                experi = executor.submit(self.call_api, **cond1)
+                compa = executor.submit(self.call_api, **cond2)
+                exp_response = experi.result()
+                comp_response = compa.result()
 
-        print("remove : ", list_from_string)
+            items_to_remove_exp, idx_to_remove_exp = self.return_landmarks_to_remove(exp_response, vlm_cls_input,
+                                                                                     vlm_cls_input_idx)
+            items_to_remove_com, _ = self.return_landmarks_to_remove(comp_response, vlm_cls_input, vlm_cls_input_idx)
+            # replace a cls id to a key
+            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                                  idx_to_remove_exp]
 
-        ##save it to json file
-        f = open(self.output_dir / "{:05d}_ori.json".format(frame_num))
-        data = json.load(f)
-        json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
-        data["vlm_filter"] = json_out
-        self.save_json(data)
+            self.save_response_json(self.vlm_filter.args.system_prompt , txt_input, exp_response, frame_num, items_to_remove_exp, self.output_dir)
+            self.save_response_json(self.vlm_filter_com.args.system_prompt, txt_input, comp_response, frame_num, items_to_remove_com, self.output_com_dir)
+
+            print("remove - experiment : ", items_to_remove_exp)
+            print("remove - comparison : ", items_to_remove_com)
+
+        return True
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
@@ -448,10 +525,11 @@ if __name__ == "__main__":
 
     while not rospy.is_shutdown():
         detector.get_model_output()
+
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
         for landmark_key in detector.landmark_keys:
             success = detector.call_remove_landmark_service(landmark_key)
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time 10
+        rospy.sleep(3)  # Simulate processing time 10
