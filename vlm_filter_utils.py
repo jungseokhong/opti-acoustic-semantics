@@ -15,7 +15,7 @@ class vision_filter(PrefixProto):
         - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
         - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
         - Tag 7 (hat): Correct. The bounding box contains a hat.
-    Step 2. The given tags might be pointing to one object. which one is more precise and covers the overall object? rank them and explain. 
+    Step 2. The given tags might be pointing to the same object. which one is more precise in covering the overall object? rank them and explain. 
       - output examples 1:
         - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  
         Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
@@ -32,7 +32,6 @@ class vision_another_filter(PrefixProto):
     database_dir = None
     system_prompt = """
     You are an assistant that identifies incorrect tags. When text tags do not match the given scene or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
-    Step 0. give me a list of objects in the given scene
     Step 1. Verify that each tag matches the object in its bounding box and explain it briefly.
       - output examples 1:
         - Tag 0 (cup): Incorrect.The bounding box contains a [object name].
@@ -40,7 +39,7 @@ class vision_another_filter(PrefixProto):
         - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
         - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
         - Tag 7 (hat): Correct. The bounding box contains a hat.
-    Step 2. The given tags might be pointing to one object. which one is more precise and covers the overall object? rank them and explain. 
+    Step 2. The given tags might be pointing to the same object. which one is more precise in covering the overall object? rank them and explain. 
       - output examples 1:
         - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  
         Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
