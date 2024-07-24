@@ -28,6 +28,7 @@ import sys
 
 sys.path.append(os.environ['LLM_MAPPING'])
 
+import random
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
 
@@ -40,7 +41,9 @@ def generate_unique_colors(num_colors):
     hsv_colors = [(i * 180 // num_colors, 255, 255) for i in
                   range(num_colors)]  # Generate colors with maximum saturation and value
     bgr_colors = [cv2.cvtColor(np.uint8([[hsv]]), cv2.COLOR_HSV2BGR)[0][0] for hsv in hsv_colors]
-    return [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
+    colors = [tuple(color.tolist()) for color in bgr_colors]  # Convert each color from numpy array to tuple
+    random.shuffle(colors)
+    return colors
 
 
 class Compare2DMapAndImage:
@@ -206,6 +209,85 @@ class Compare2DMapAndImage:
 
         return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array, landmark_keys_array
 
+    def tag_edge(self, edge, tlx, tly, brx, bry, box_size, add_w):
+        if edge == "tl":  # top_left
+            if tly - box_size < 0:
+                tlp_y = tly  # inside
+                brp_y = tly + box_size
+            else:
+                tlp_y = tly - box_size
+                brp_y = tly
+            tlp_x = tlx
+            brp_x = tlx + box_size + add_w
+        elif edge == "tr":
+            if tly - box_size < 0:
+                tlp_y = tly  # inside
+                brp_y = tly + box_size
+            else:
+                tlp_y = tly - box_size
+                brp_y = tly
+            tlp_x = brx - box_size - add_w
+            brp_x = brx
+        elif edge == "lt":
+            if tlx - box_size - add_w < 0:
+                tlp_x = tlx  # inside
+                brp_x = tlx + box_size + add_w
+            else:
+                tlp_x = tlx - box_size - add_w
+                brp_x = tlx
+            tlp_y = tly
+            brp_y = tly + box_size
+        elif edge == "rt":
+            if brx + box_size + add_w > self.img_width:
+                tlp_x = brx - box_size - add_w  # inside
+                brp_x = brx
+            else:
+                tlp_x = brx
+                brp_x = brx + box_size + add_w
+            tlp_y = tly
+            brp_y = tly + box_size
+        elif edge == "bl":
+            if bry + box_size > self.img_height:
+                tlp_y = bry - box_size  # inside
+                brp_y = bry
+            else:
+                tlp_y = bry
+                brp_y = bry + box_size
+            tlp_x = tlx
+            brp_x = tlx + box_size + add_w
+        else:  # edge == "br"
+            if bry + box_size > self.img_height:
+                tlp_y = bry - box_size  # inside
+                brp_y = bry
+            else:
+                tlp_y = bry
+                brp_y = bry + box_size
+            tlp_x = brx - box_size - add_w
+            brp_x = brx
+        return ((tlp_x, tlp_y), (brp_x, brp_y))
+
+    def tag_box(self, tlx, tly, brx, bry, box_size, tag_area):
+        add_w = 10
+        edge = ["tl", "tr", "bl", "br", "lt", "rt"]
+
+        for edge_mode in edge:
+            (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_edge(edge_mode, tlx, tly, brx, bry, box_size, add_w)
+            if tag_area == []:
+                #print(edge_mode)
+                tag_area.append((tlp_x, tlp_y, brp_x, brp_y))
+                return ((tlp_x, tlp_y), (brp_x, brp_y))
+            overlapping = False
+            for area in tag_area:
+                if (area[0] <= brp_x  and  area[2] >= tlp_x) and (area[1] <= brp_y and area[3] >= tlp_y):
+                    overlapping = True
+                    break
+            if not overlapping:
+                tag_area.append((tlp_x, tlp_y, brp_x, brp_y))
+                return ((tlp_x, tlp_y), (brp_x, brp_y))
+
+        tag_area.append((tlp_x, tlp_y, brp_x, brp_y))
+        return ((tlp_x, tlp_y), (brp_x, brp_y))
+
     def projectLandmarksToImage(self, position, orientation, landmark_points, landmark_classes, landmark_widths,
                                 landmark_heights, landmark_keys, img=None):
 
@@ -259,6 +341,7 @@ class Compare2DMapAndImage:
         # Iterate over each projected point
         json_out = {}
         obj = []
+        tag_area = []
         for i, (point_3d, landmark_key, point_2d) in enumerate(zip(landmark_points, landmark_keys, points_2d_homo.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
@@ -280,17 +363,22 @@ class Compare2DMapAndImage:
                 brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
                 bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
 
+                # tag_box
+                b_size = 20
+                tag_tl, tag_br = self.tag_box(tlx, tly, brx, bry, b_size, tag_area)
+
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
-                cv2.rectangle(projected_image, (tlx, tly), (tlx + 30, tly + 20), color, -1)
-                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
+                cv2.rectangle(projected_image, tag_tl, tag_br, color, -1)  # tag
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # boudingbox
 
-                alpha = 0.4
+                alpha = 0.3
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
-                tag_name = f"[{i}]"
-                cv2.putText(projected_image, tag_name, (tlx, tly + 18), cv2.FONT_HERSHEY_DUPLEX, 0.3,
-                            (0, 0, 0), 1)
+                #tag_name = f"[{i}]"
+                #cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                #            (0, 0, 0), 1)
+                #cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
 
                 obj_dic = {"label": landmark_classes[i],
                            "x": x,
@@ -300,6 +388,13 @@ class Compare2DMapAndImage:
                            "landmark_key": str(landmark_key)
                            }
                 obj.append(obj_dic)
+
+        # print text on the image
+        for single_obj, tag in zip(obj, tag_area):
+            tag_name = f"[{single_obj['i']}]"
+            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (0, 0, 0), 1)
+
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -322,8 +417,8 @@ class Compare2DMapAndImage:
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
-        #_output_path = output_path / "{:05d}.png".format(self.frame_num)
-        #cv2.imwrite(str(_output_path), img)
+        _output_path = output_path / "{:05d}.png".format(self.frame_num)
+        cv2.imwrite(str(_output_path), img)
 
         _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), projected_image)
@@ -339,9 +434,9 @@ class Compare2DMapAndImage:
             data = {}
 
         for key in json_out.keys():
-            data[key]  = json_out[key]
+            data[key] = json_out[key]
 
-        with open( json_path, "w") as f:
+        with open(json_path, "w") as f:
             json.dump(data, f, indent=4)
 
     def combine_images(self, img1, img2):
@@ -401,10 +496,10 @@ class Compare2DMapAndImage:
             data = json.load(f)
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
-            data = {"prompts": prompts.split('\n'), "{:05d}.png".format(frame_num) : {}}
+            data = {"prompts": prompts.split('\n'), "{:05d}.png".format(frame_num): {}}
 
         if "prompts" not in data:
-            new_data ={}
+            new_data = {}
             new_data["prompts"] = prompts.split('\n')
             for key in data.keys():
                 new_data[key] = data[key]
@@ -417,7 +512,7 @@ class Compare2DMapAndImage:
         json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
         data["{:05d}.png".format(frame_num)]["vlm_filter"] = json_out
 
-        with open( json_path, "w") as f:
+        with open(json_path, "w") as f:
             json.dump(data, f, indent=4)
 
     def get_model_output(self):
@@ -451,7 +546,7 @@ class Compare2DMapAndImage:
         print(f"[text input] {txt_input}")
 
         # save an input img
-        #cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
 
         if not self.compare_promts:
             self.vlm_filter.reset_memory()
@@ -463,7 +558,8 @@ class Compare2DMapAndImage:
             self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
                                   idx_to_remove]
 
-            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response, frame_num, items_to_remove, self.output_dir)
+            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response, frame_num,
+                                    items_to_remove, self.output_dir)
             print("remove - experiment : ", items_to_remove)
         else:  # multi-threading
             from concurrent.futures import ThreadPoolExecutor
@@ -485,8 +581,10 @@ class Compare2DMapAndImage:
             self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
                                   idx_to_remove_exp]
 
-            self.save_response_json(self.vlm_filter.args.system_prompt , txt_input, exp_response, frame_num, items_to_remove_exp, self.output_dir)
-            self.save_response_json(self.vlm_filter_com.args.system_prompt, txt_input, comp_response, frame_num, items_to_remove_com, self.output_com_dir)
+            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, exp_response, frame_num,
+                                    items_to_remove_exp, self.output_dir)
+            self.save_response_json(self.vlm_filter_com.args.system_prompt, txt_input, comp_response, frame_num,
+                                    items_to_remove_com, self.output_com_dir)
 
             print("remove - experiment : ", items_to_remove_exp)
             print("remove - comparison : ", items_to_remove_com)
