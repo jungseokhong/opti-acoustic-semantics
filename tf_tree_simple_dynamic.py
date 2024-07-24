@@ -44,7 +44,7 @@ if __name__ == '__main__':
     tf_broadcaster = tf2_ros.TransformBroadcaster()
 
 
-    rate = rospy.Rate(10.0)
+    rate = rospy.Rate(240.0)
     while not rospy.is_shutdown():
         try:
             # trans = tfBuffer.lookup_transform('world', 'ZED2i', rospy.Time())
@@ -56,7 +56,7 @@ if __name__ == '__main__':
             # print(trans_world_to_zed)
 
             # Get transform from /odom to /base_link
-            trans_odom_to_base = tfBuffer.lookup_transform('odom', 'base_link', common_time)
+            # trans_odom_to_base = tfBuffer.lookup_transform('odom', 'base_link', common_time)
             # print(trans_odom_to_base)
 
             # Get transform from /ZED2i to /zed2i_left_camera_optical_frame
@@ -80,32 +80,31 @@ if __name__ == '__main__':
 
             
             # Get transform from /base_link to /zed2i_base_link
-            trans_base_to_zed_base = tfBuffer.lookup_transform('base_link', 'zed2i_base_link', common_time)
+            ## this is Identity transform
+            # trans_base_to_zed_base = tfBuffer.lookup_transform('base_link', 'zed2i_base_link', common_time)
 
             # Convert transforms to matrices
             matrix_world_to_zed = transform_to_matrix(trans_world_to_zed)
             matrix_zed_to_optical = transform_to_matrix(trans_zed_to_optical)
             matrix_optical_to_base = tfm.concatenate_matrices(translation_matrix_optical_to_base, rotation_matrix_optical_to_base)
-            matrix_base_to_zed_base = transform_to_matrix(trans_base_to_zed_base)
-            matrix_odom_to_base = transform_to_matrix(trans_odom_to_base)
+            # matrix_base_to_zed_base = transform_to_matrix(trans_base_to_zed_base)
+            # matrix_odom_to_base = transform_to_matrix(trans_odom_to_base)
 
             # Combine the transformations
-            matrix_world_to_odom = tfm.concatenate_matrices(
+            matrix_world_to_base = tfm.concatenate_matrices(
                 matrix_world_to_zed,
                 matrix_zed_to_optical,
                 matrix_optical_to_base,
-                matrix_base_to_zed_base,
-                matrix_odom_to_base
             )
 
             # Convert the resulting matrix to a Transform message
-            combined_transform = matrix_to_transform(matrix_world_to_odom)
+            combined_transform = matrix_to_transform(matrix_world_to_base)
 
             # Create a TransformStamped message for broadcasting
             transform_stamped = geometry_msgs.msg.TransformStamped()
             transform_stamped.header.stamp = rospy.Time.now()
             transform_stamped.header.frame_id = 'world'
-            transform_stamped.child_frame_id = 'odom'
+            transform_stamped.child_frame_id = 'base_link'
             transform_stamped.transform = combined_transform
 
             # Broadcast the transform
