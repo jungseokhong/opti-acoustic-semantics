@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from dotenv import load_dotenv
-
 load_dotenv()
 
 import os
@@ -25,7 +24,6 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
-
 sys.path.append(os.environ['LLM_MAPPING'])
 
 import random
@@ -372,7 +370,7 @@ class Compare2DMapAndImage:
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, -1)  # tag
                 cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # boudingbox
 
-                alpha = 0.3
+                alpha = 0.4
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
                 #tag_name = f"[{i}]"
@@ -562,9 +560,55 @@ class Compare2DMapAndImage:
                                     items_to_remove, self.output_dir)
             print("remove - experiment : ", items_to_remove)
         else:  # multi-threading
+            ###
             from concurrent.futures import ThreadPoolExecutor
+            prompt = """
+cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7
+
+Examples of each step's output for the given image and its tags:
+Step 1
+    - Tag 0 (cup): Incorrect.The bounding box contains a ball.
+    - Tag 1 (book): Correct. The bounding box contains a book.
+    - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
+    - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
+    - Tag 7 (hat): Correct. The bounding box contains a hat.
+            
+Step 2
+    - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it. Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
+            
+Step 3
+    - unmatched_tags = [0]
+    - unmatched_tags = [3, 7]
+    
+Step 4
+    - unmatched_tags = [0, 3, 7]
+"""
+            user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
+            assistant_commant= """Step 1
+    - Tag 0 (cup): Incorrect.The bounding box contains a ball.
+    - Tag 1 (book): Correct. The bounding box contains a book.
+    - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
+    - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
+    - Tag 7 (hat): Correct. The bounding box contains a hat.
+            
+Step 2
+    - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it. Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
+            
+Step 3
+    - unmatched_tags = [0]
+    - unmatched_tags = [3, 7]
+    
+Step 4
+    - unmatched_tags = [0, 3, 7]"""
+
             self.vlm_filter.reset_memory()
+            self.vlm_filter.reset_with_img(role = "system", prompt=prompt, img = "/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+            ###
+
             self.vlm_filter_com.reset_memory()
+            self.vlm_filter_com.reset_with_img(role="user", prompt=user_commant,
+                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+            self.vlm_filter_com.add_memory_with_prompts(role = "assistant", prompt = assistant_commant)
 
             cond1 = {"vlm_filter": self.vlm_filter, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
             cond2 = {"vlm_filter": self.vlm_filter_com, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
