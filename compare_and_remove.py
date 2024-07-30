@@ -48,7 +48,9 @@ class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox"
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_out1"
+        self.delete_file(self.output_dir / "results.json") # remove .json file if exist
+
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
         fx = 527.150146484375
@@ -95,10 +97,9 @@ class Compare2DMapAndImage:
         self.sync.registerCallback(self.forward_pass)
 
         self.frame_num = 0
-        self.vlm_input = None
-
         self.client = OpenAI()
         self.vlm_filter = vision_agent(vision_filter)
+
 
         #####comparison set
         self.compare_promts = False
@@ -106,7 +107,11 @@ class Compare2DMapAndImage:
             from vlm_filter_utils import vision_another_filter
             self.vlm_filter_com = vision_agent(vision_another_filter)
             self.output_com_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_comp"
+            self.delete_file(self.output_com_dir / "results.json")
 
+    def delete_file(self, path):
+        if path.exists():
+            path.unlink(missing_ok=True)
     def camera_info_callback(self, cam_info: CameraInfo):
         # Update camera intrinsic matrix K
         fx = cam_info.K[0]
@@ -400,9 +405,9 @@ class Compare2DMapAndImage:
 
         if self.save_projections:
             self.frame_num += 1
-            # json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-            json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
-            # json_out["contents"] = obj
+            json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+            #json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
+            json_out["contents"] = obj
 
             self.save_img(img, projected_image)
             self.save_json(json_out, self.output_dir)
@@ -422,20 +427,11 @@ class Compare2DMapAndImage:
         cv2.imwrite(str(_output_path), projected_image)
 
     def save_json(self, json_out, output_dir):
-        # name = json_out["image_idx"][:-4] + ".json"
-        json_path = output_dir / "results.json"
-
-        if json_path.exists():
-            f = open(json_path)
-            data = json.load(f)
-        else:
-            data = {}
-
-        for key in json_out.keys():
-            data[key] = json_out[key]
+        json_path = json_out["image_idx"][:-4] + ".json"
+        json_path = output_dir / json_path
 
         with open(json_path, "w") as f:
-            json.dump(data, f, indent=4)
+            json.dump(json_out, f, indent=4)
 
     def combine_images(self, img1, img2):
         # Ensure both images are the same height
@@ -464,9 +460,12 @@ class Compare2DMapAndImage:
             print(f"Class '{class_name}' not found in class list.")
             return [-1]  # Returns -1 if the class is not found
 
-    def call_api(self, vlm_filter, vlm_img_input, txt_input):
-        vlm_filter.reset_memory()
+    def call_api_with_img(self, vlm_filter, vlm_img_input, txt_input):
         vlm_response = vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
+        str_response = return_str(vlm_response)
+        return str_response
+    def call_api(self, vlm_filter, txt_input):
+        vlm_response = vlm_filter.call_vision_agent(txt_input, self.client)
         str_response = return_str(vlm_response)
         return str_response
 
@@ -486,9 +485,10 @@ class Compare2DMapAndImage:
 
         return list_from_string, list_from_idx
 
-    def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir):
+    def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir, json_name):
         ##save it to json file
-        json_path = output_dir / "results.json"
+        #json_path = output_dir / "results.json"
+        json_path = output_dir / json_name
         if json_path.exists():
             f = open(json_path)
             data = json.load(f)
@@ -548,17 +548,27 @@ class Compare2DMapAndImage:
 
         if not self.compare_promts:
             self.vlm_filter.reset_memory()
-            str_response = self.call_api(self.vlm_filter, vlm_img_input, txt_input)
-            items_to_remove, idx_to_remove = self.return_landmarks_to_remove(str_response, vlm_cls_input,
+            str_response1 = self.call_api_with_img(self.vlm_filter, vlm_img_input, txt_input)
+            #txt_prompt = """let's double check your response. Step1. 박스안에 무엇이 있나 보고 , Step2. 비주얼적으로 전체 박스가 오브젝트를 감싸고 있나?  Step3. Step4"""
+            #print(txt_prompt)
+            #str_response2 = self.call_api(self.vlm_filter, txt_prompt)
+
+            items_to_remove1, idx_to_remove1 = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                              vlm_cls_input_idx)
 
-            # replace a cls id to a key
-            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                                  idx_to_remove]
+            # items_to_remove2, idx_to_remove2 = self.return_landmarks_to_remove(str_response2, vlm_cls_input,
+            #                                                                  vlm_cls_input_idx)
 
-            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response, frame_num,
-                                    items_to_remove, self.output_dir)
-            print("remove - experiment : ", items_to_remove)
+            # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
+            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                                  idx_to_remove1]
+
+            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response1, frame_num,
+                                    items_to_remove1, self.output_dir, "results1.json")
+            #self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
+            #                        "out of format", self.output_dir, "results2.json")
+            print("remove - experiment1 : ", items_to_remove1)
+
         else:  # multi-threading
             ###
             from concurrent.futures import ThreadPoolExecutor
@@ -613,8 +623,8 @@ Step 4
             cond1 = {"vlm_filter": self.vlm_filter, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
             cond2 = {"vlm_filter": self.vlm_filter_com, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
             with ThreadPoolExecutor() as executor:
-                experi = executor.submit(self.call_api, **cond1)
-                compa = executor.submit(self.call_api, **cond2)
+                experi = executor.submit(self.call_api_with_img, **cond1)
+                compa = executor.submit(self.call_api_with_img, **cond2)
                 exp_response = experi.result()
                 comp_response = compa.result()
 
@@ -674,4 +684,4 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(3)  # Simulate processing time 10
+        rospy.sleep(10)  # Simulate processing time 10
