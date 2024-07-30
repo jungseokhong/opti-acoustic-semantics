@@ -240,6 +240,13 @@ class Compare2DMapAndImage:
         points_2d_homo = self.K @ RT @ homogeneous_points
         # print(points_2d_homo.shape, points_2d_homo.T)
 
+        # project points in world frame to camera frame
+        RT_2 = np.eye(4)
+        RT_2[:3, :3] = R_C_W
+        RT_2[:3, 3] = -R_C_W @ t_vec
+        points_3d_homo_camera_frame = RT_2 @ homogeneous_points
+        # print(f'points_3d_homo_camera_frame shape {points_3d_homo_camera_frame.shape}, and real data:  {points_3d_homo_camera_frame}')
+
         # Initialize a blank image
         if img is not None and img.size > 0:
             projected_image = img.copy()
@@ -252,10 +259,13 @@ class Compare2DMapAndImage:
         # Iterate over each projected point
         json_out = {}
         obj = []
-        for i, (point_3d, landmark_key, point_2d) in enumerate(zip(landmark_points, landmark_keys, points_2d_homo.T)):
+        for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
+            if point_3d_camera_frame[2] < 0:
+                # print(f'landmark_key : {landmark_key}, point_3d_camera_frame: {point_3d_camera_frame}')
+                continue
 
             # Scale widths and heights based on the depth
             scale_factor_w = self.K[
