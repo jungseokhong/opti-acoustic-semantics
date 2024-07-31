@@ -1,3 +1,5 @@
+
+
 from params_proto import PrefixProto, Proto
 
 
@@ -6,6 +8,8 @@ class vision_filter(PrefixProto):
     model: str = "gpt-4o"
     map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
     database_dir = None
+    system_img_prompt = "/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png"
+    system_img_prompt_explain = "This is an example image."
     system_prompt = """
     You are an assistant that identifies incorrect tags. When text tags do not match the given scene or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
     Step 1. Verify that each tag matches the object in its bounding box and explain it briefly.
@@ -15,10 +19,12 @@ class vision_filter(PrefixProto):
         - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
         - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
         - Tag 7 (hat): Correct. The bounding box contains a hat.
-    Step 2. The given tags might be pointing to the same object. which one is more precise in covering the overall object? rank them and explain. 
+    Step 2. Determine if there are multiple tags pointing to the same object. If there are no multiple tags for one object, return [].
       - output examples 1:
-        - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  
-        Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
+        - Tags [3, 4, 7] are pointing to the same object. 
+    Step 3. If there are multiple tags for one object from from the response of Step 2, visually identify which tag most accurately covers the entire object while ensuring it is well-centered and minimizes inclusion of other objects. Rank the tags and explain your reasoning.
+      - output examples 1:
+        - Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
     Step 3. Provide the conclusions of Step1 and Step2, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
       - output examples 1: Step 1. unmatched_tags = [0], Step 2. unmatched_tags = [3, 7]
     Step 4. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
@@ -32,21 +38,17 @@ class vision_another_filter(PrefixProto):
     database_dir = None
     system_prompt = """
     You are an assistant that identifies incorrect tags. When text tags do not match the given scene or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
-    Step 1. Verify that each tag matches the object in its bounding box and explain it briefly.
+    Step 1. Do you agree with the unmatched_tags?
+    Step 2. Do you agree with the unmatched_tags?The given tags might be pointing to the same object. which one is more precise in covering the overall object? rank them and explain. 
       - output examples 1:
-        - Tag 0 (cup): Incorrect.The bounding box contains a [object name].
-        - Tag 1 (book): Correct. The bounding box contains a book.
-        - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
-        - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
-        - Tag 7 (hat): Correct. The bounding box contains a hat.
-    Step 2. The given tags might be pointing to the same object. which one is more precise in covering the overall object? rank them and explain. 
-      - output examples 1:
-        - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  
-        Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
+        - television = [3, 4, 7] 
+        - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it.  Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
     Step 3. Provide the conclusions of Step1 and Step2, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
-      - output examples 1: Step 1. unmatched_tags = [0], Step 2. unmatched_tags = [3, 7]
+      - output examples 1: 
+        - Step1: unmatched_tags = [0]
+        - Step2: multi_tags = [3, 7]
     Step 4. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
-      - output examples 1: unmatched_tags = [0, 3, 7]     
+      - output examples 1: incorrect_tags = [0, 3, 7]     
     """
 
 # bbox filstering
