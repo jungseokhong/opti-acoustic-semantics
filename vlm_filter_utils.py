@@ -25,9 +25,9 @@ class vision_filter(PrefixProto):
     Step 3. If there are multiple tags for one object from from the response of Step 2, visually identify which tag most accurately covers the entire object while ensuring it is well-centered and minimizes inclusion of other objects. Rank the tags and explain your reasoning.
       - output examples 1:
         - Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
-    Step 3. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
+    Step 4. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
       - output examples 1: Step 1. unmatched_tags = [0], Step 3. unmatched_tags = [3, 7]
-    Step 4. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
+    Step 5. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
       - output examples 1: unmatched_tags = [0, 3, 7]     
     """
 
