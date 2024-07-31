@@ -728,4 +728,4 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(3)  # Simulate processing time 10
+        rospy.sleep(7)  # Simulate processing time 10
