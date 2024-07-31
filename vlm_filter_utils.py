@@ -8,10 +8,10 @@ class vision_filter(PrefixProto):
     model: str = "gpt-4o"
     map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
     database_dir = None
-    system_img_prompt = "/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png"
+    system_img_prompt = None #"/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png"
     system_img_prompt_explain = "This is an example image."
     system_prompt = """
-    You are an assistant that identifies incorrect tags. When text tags do not match the given scene or when multiple tags are assigned to a single object, you determine the most accurate tag and identify the others as incorrect tags. You respond according to the given steps.
+    You are an assistant that identifies incorrect tags. You respond according to the given steps.
     Step 1. Verify that each tag matches the object in its bounding box and explain it briefly.
       - output examples 1:
         - Tag 0 (cup): Incorrect.The bounding box contains a [object name].
@@ -25,8 +25,8 @@ class vision_filter(PrefixProto):
     Step 3. If there are multiple tags for one object from from the response of Step 2, visually identify which tag most accurately covers the entire object while ensuring it is well-centered and minimizes inclusion of other objects. Rank the tags and explain your reasoning.
       - output examples 1:
         - Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
-    Step 3. Provide the conclusions of Step1 and Step2, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
-      - output examples 1: Step 1. unmatched_tags = [0], Step 2. unmatched_tags = [3, 7]
+    Step 3. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
+      - output examples 1: Step 1. unmatched_tags = [0], Step 3. unmatched_tags = [3, 7]
     Step 4. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 3.
       - output examples 1: unmatched_tags = [0, 3, 7]     
     """
