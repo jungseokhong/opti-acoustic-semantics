@@ -25,6 +25,7 @@ from ast import literal_eval
 from vlm_filter_utils import vision_filter
 
 import sys
+
 sys.path.append(os.environ['LLM_MAPPING'])
 
 import random
@@ -49,8 +50,8 @@ class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_out1"
-        self.delete_file(self.output_dir / "results.json") # remove .json file if exist
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_conf"
+        self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -101,7 +102,6 @@ class Compare2DMapAndImage:
         self.client = OpenAI()
         self.vlm_filter = vision_agent(vision_filter)
 
-
         #####comparison set
         self.compare_promts = False
         if self.compare_promts:
@@ -113,6 +113,7 @@ class Compare2DMapAndImage:
     def delete_file(self, path):
         if path.exists():
             path.unlink(missing_ok=True)
+
     def camera_info_callback(self, cam_info: CameraInfo):
         # Update camera intrinsic matrix K
         fx = cam_info.K[0]
@@ -277,12 +278,12 @@ class Compare2DMapAndImage:
         for edge_mode in edge:
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_edge(edge_mode, tlx, tly, brx, bry, box_size, add_w)
             if tag_area == []:
-                #print(edge_mode)
+                # print(edge_mode)
                 tag_area.append((tlp_x, tlp_y, brp_x, brp_y))
                 return ((tlp_x, tlp_y), (brp_x, brp_y))
             overlapping = False
             for area in tag_area:
-                if (area[0] <= brp_x  and  area[2] >= tlp_x) and (area[1] <= brp_y and area[3] >= tlp_y):
+                if (area[0] <= brp_x and area[2] >= tlp_x) and (area[1] <= brp_y and area[3] >= tlp_y):
                     overlapping = True
                     break
             if not overlapping:
@@ -353,7 +354,8 @@ class Compare2DMapAndImage:
         json_out = {}
         obj = []
         tag_area = []
-        for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
+        for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(
+                zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
@@ -384,15 +386,15 @@ class Compare2DMapAndImage:
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, -1)  # tag
-                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # boudingbox
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # boudingbox 1 - 0.45
 
                 alpha = 0.4
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
-                #tag_name = f"[{i}]"
-                #cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                # tag_name = f"[{i}]"
+                # cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 #            (0, 0, 0), 1)
-                #cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
+                # cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
 
                 obj_dic = {"label": landmark_classes[i],
                            "x": x,
@@ -406,9 +408,8 @@ class Compare2DMapAndImage:
         # print text on the image
         for single_obj, tag in zip(obj, tag_area):
             tag_name = f"[{single_obj['i']}]"
-            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                         (0, 0, 0), 1)
-
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -417,7 +418,7 @@ class Compare2DMapAndImage:
         if self.save_projections:
             self.frame_num += 1
             json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
-            #json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
+            # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
 
             self.save_img(img, projected_image)
@@ -475,10 +476,42 @@ class Compare2DMapAndImage:
         vlm_response = vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
         str_response = return_str(vlm_response)
         return str_response
+
     def call_api(self, vlm_filter, txt_input):
         vlm_response = vlm_filter.call_vision_agent(txt_input, self.client)
         str_response = return_str(vlm_response)
         return str_response
+
+    def memory_manipulation(self, vlm_filter):
+        user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
+        commant="""\nExamples of each step's output for the given image and its tags:\n"""
+        assistant_commant = """Step 1. 
+    Tag 0 (cup): Incorrect.The bounding box contains a ball.
+    Tag 1 (book): Correct. 
+    Tag 3 (baseball hat): Correct. 
+    Tag 4 (baseball hat): Correct.   
+    Tag 7 (hat): Correct. 
+Step 2. 
+    Tags [3, 4, 7] are pointing to the same object. 
+Step 3. 
+    Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on only a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
+Step 4. 
+    unmatched_tags = [0]
+    unmatched_tags = [3, 7]
+Step 5.
+    unmatched_tags = [0, 3, 7] """
+
+        vlm_filter.reset_with_img(role="user", prompt=user_commant,
+                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+        vlm_filter.add_memory_with_prompts(role="assistant", prompt=assistant_commant)
+
+
+        ####
+        # vlm_filter.reset_with_img(role="system", prompt=user_commant+commant+assistant_commant,
+        #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+        #
+
+
 
     def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
         ## Extract the part of the string that represents the list
@@ -498,7 +531,7 @@ class Compare2DMapAndImage:
 
     def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir, json_name):
         ##save it to json file
-        #json_path = output_dir / "results.json"
+        # json_path = output_dir / "results.json"
         json_path = output_dir / json_name
         if json_path.exists():
             f = open(json_path)
@@ -533,9 +566,6 @@ class Compare2DMapAndImage:
             print("no landmark")
             return True
 
-        # if self.frame_num not in [1,20,24,36,53,64,79,99,117,132,146,163,177,178]:
-        #     return True
-
         # copy necessary vars
         frame_num = self.frame_num
         vlm_cls_input_idx = self.vlm_cls_input_idx
@@ -558,17 +588,15 @@ class Compare2DMapAndImage:
         # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
 
         if not self.compare_promts:
-            self.vlm_filter.reset_memory()
+
+
+            self.vlm_filter.reset_memory() #re
+            #self.memory_manipulation(self.vlm_filter) # Add examples of the response I want
+
             str_response1 = self.call_api_with_img(self.vlm_filter, vlm_img_input, txt_input)
-            #txt_prompt = """let's double check your response. Step1. 박스안에 무엇이 있나 보고 , Step2. 비주얼적으로 전체 박스가 오브젝트를 감싸고 있나?  Step3. Step4"""
-            #print(txt_prompt)
-            #str_response2 = self.call_api(self.vlm_filter, txt_prompt)
 
             items_to_remove1, idx_to_remove1 = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                             vlm_cls_input_idx)
-
-            # items_to_remove2, idx_to_remove2 = self.return_landmarks_to_remove(str_response2, vlm_cls_input,
-            #                                                                  vlm_cls_input_idx)
+                                                                               vlm_cls_input_idx)
 
             # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
             self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
@@ -576,9 +604,18 @@ class Compare2DMapAndImage:
 
             self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response1, frame_num,
                                     items_to_remove1, self.output_dir, "results1.json")
-            #self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
-            #                        "out of format", self.output_dir, "results2.json")
+
             print("remove - experiment1 : ", items_to_remove1)
+
+            # double-check-api
+            # txt_prompt = """let's double check your response."""
+            # print(txt_prompt)
+            # str_response2 = self.call_api(self.vlm_filter, txt_prompt)
+            # items_to_remove2, idx_to_remove2 = self.return_landmarks_to_remove(str_response2, vlm_cls_input,
+            #                                                                  vlm_cls_input_idx)
+            # self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
+            #                        "out of format", self.output_dir, "results2.json")
+
 
         else:  # multi-threading
             ###
@@ -605,7 +642,7 @@ Step 4
     - unmatched_tags = [0, 3, 7]
 """
             user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
-            assistant_commant= """Step 1
+            assistant_commant = """Step 1
     - Tag 0 (cup): Incorrect.The bounding box contains a ball.
     - Tag 1 (book): Correct. The bounding box contains a book.
     - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
@@ -623,13 +660,14 @@ Step 4
     - unmatched_tags = [0, 3, 7]"""
 
             self.vlm_filter.reset_memory()
-            self.vlm_filter.reset_with_img(role = "system", prompt=prompt, img = "/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+            self.vlm_filter.reset_with_img(role="system", prompt=prompt,
+                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
             ###
 
             self.vlm_filter_com.reset_memory()
             self.vlm_filter_com.reset_with_img(role="user", prompt=user_commant,
-                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
-            self.vlm_filter_com.add_memory_with_prompts(role = "assistant", prompt = assistant_commant)
+                                               img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+            self.vlm_filter_com.add_memory_with_prompts(role="assistant", prompt=assistant_commant)
 
             cond1 = {"vlm_filter": self.vlm_filter, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
             cond2 = {"vlm_filter": self.vlm_filter_com, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
@@ -681,7 +719,6 @@ Step 4
             rospy.logerr("Service call failed: %s" % e)
             return False
 
-
 if __name__ == "__main__":
     rospy.init_node("landmarks_comparison_and_removal")
     detector = Compare2DMapAndImage()
@@ -694,4 +731,4 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time 10
+        rospy.sleep(3)  # Simulate processing time 10
