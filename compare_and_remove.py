@@ -484,7 +484,7 @@ class Compare2DMapAndImage:
 
     def memory_manipulation(self, vlm_filter):
         user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
-        commant="""\nExamples of each step's output for the given image and its tags:\n"""
+        commant = """\nExamples of each step's output for the given image and its tags:\n"""
         assistant_commant = """Step 1. 
     Tag 0 (cup): Incorrect.The bounding box contains a ball.
     Tag 1 (book): Correct. 
@@ -502,16 +502,13 @@ Step 5.
     unmatched_tags = [0, 3, 7] """
 
         vlm_filter.reset_with_img(role="user", prompt=user_commant,
-                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
+                                  img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
         vlm_filter.add_memory_with_prompts(role="assistant", prompt=assistant_commant)
-
 
         ####
         # vlm_filter.reset_with_img(role="system", prompt=user_commant+commant+assistant_commant,
         #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
         #
-
-
 
     def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
         ## Extract the part of the string that represents the list
@@ -589,9 +586,8 @@ Step 5.
 
         if not self.compare_promts:
 
-
-            self.vlm_filter.reset_memory() #re
-            #self.memory_manipulation(self.vlm_filter) # Add examples of the response I want
+            self.vlm_filter.reset_memory()  # re
+            # self.memory_manipulation(self.vlm_filter) # Add examples of the response I want
 
             str_response1 = self.call_api_with_img(self.vlm_filter, vlm_img_input, txt_input)
 
@@ -718,6 +714,7 @@ Step 4
         except rospy.ServiceException as e:
             rospy.logerr("Service call failed: %s" % e)
             return False
+
 
 if __name__ == "__main__":
     rospy.init_node("landmarks_comparison_and_removal")

@@ -14,17 +14,24 @@ class vision_filter(PrefixProto):
         example 1:
         Tag 1 (bag): Correct.
         Tag 4 (apple): Incorrect. It is a [object name in the bounding box]
-    Step 2. Determine if there are multiple tags pointing to the same object. If there are no multiple tags for one object, return "no multiple tag".
+        Tag 6 (ball): Correct
+        Tag 7 (ball): Correct
+    Step 2. Determine if there are multiple tags pointing to the same object and return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
         example 1:
-        Tags [number of multiple tags] or No multiple tag
+        Tags [6, 7] are pointing to the same object
 
     Step 3. If there are multiple tags for one object from the response of Step 2, visually identify which tag most accurately covers the entire object. Rank the tags and explain your reasoning.
         example 1:
-        Tags [the number of multiple tags from Step 2]: [explain your reasoning]
+        Tags [the number of multiple tags from Step 2]: [explain your reasoning]. Therefore, precise_tag = [7]
 
-    Step 4. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags. 
+    Step 4. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags.
+        example 1:
+        unmatched_tags = [4]
+        unmatched_tags = [6] 
 
     Step 5. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 4.   
+        example 1:
+        unmatched_tags = [4, 6]
     """
 
 class vision_another_filter(PrefixProto):
