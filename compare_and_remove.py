@@ -359,8 +359,13 @@ class Compare2DMapAndImage:
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
+            # Pass if the landmark z location is behind the camera's location
             if point_3d_camera_frame[2] < 0:
                 # print(f'landmark_key : {landmark_key}, point_3d_camera_frame: {point_3d_camera_frame}')
+                continue
+
+            # Project landmarks only less than 5m away from current position. need better algorithm to filter this.
+            if Z >= 5:
                 continue
 
             # Scale widths and heights based on the depth
