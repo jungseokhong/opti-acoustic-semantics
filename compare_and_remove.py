@@ -153,7 +153,7 @@ class Compare2DMapAndImage:
         position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, landmark_keys = self.parse_data(
             map_info)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage(position, orientation, landmark_points, landmark_classes,
+        projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points, landmark_classes,
                                                        landmark_widths, landmark_heights, landmark_keys, img=yoloimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
@@ -431,6 +431,167 @@ class Compare2DMapAndImage:
 
         self.vlm_img_input = projected_image
         return projected_image
+    
+
+    def projectLandmarksToImage_removeoverlap(self, position, orientation, landmark_points, landmark_classes, landmark_widths,
+                                landmark_heights, landmark_keys, img=None):
+
+        # Quaternion to rotation matrix conversion
+        q = orientation
+
+        r = R.from_quat(q)
+        rotation_matrix = r.as_matrix()  # body to world
+
+        camToBody = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])  # R_B_C
+        # print(f' Cam to Body: {camToBody}')
+        new_rotation_matrix = np.matmul(rotation_matrix, camToBody)
+
+        R_W_B = rotation_matrix
+        R_B_W = np.linalg.inv(R_W_B)
+        R_B_C = camToBody
+        R_C_B = np.linalg.inv(R_B_C)
+        R_C_W = np.matmul(R_C_B, R_B_W)
+
+        # Convert rotation matrix to Rodrigues vector
+        R_vec, _ = cv2.Rodrigues(new_rotation_matrix)
+        t_vec = position
+
+        # Project points
+        dist_coeffs = np.zeros(4)  # Assuming no lens distortion
+
+        # building projection matrix
+        RT = np.zeros([3, 4])
+        RT[:3, :3] = R_C_W  # np.linalg.inv(new_rotation_matrix)
+        RT[:3, 3] = -R_C_W @ t_vec
+        # print(f'RT: {RT}')
+
+        # Step 1: Transpose the matrix to make it 3xN
+        transposed_points = landmark_points.T
+        # Step 2: Add a row of ones to make it 4xN
+        homogeneous_points = np.vstack([transposed_points, np.ones(transposed_points.shape[1])])
+
+        # points_2d, _ = cv2.projectPoints(landmark_points, new_rotation_matrix, t_vec, K, dist_coeffs)
+        points_2d_homo = self.K @ RT @ homogeneous_points
+        # print(points_2d_homo.shape, points_2d_homo.T)
+
+        # project points in world frame to camera frame
+        RT_2 = np.eye(4)
+        RT_2[:3, :3] = R_C_W
+        RT_2[:3, 3] = -R_C_W @ t_vec
+        points_3d_homo_camera_frame = RT_2 @ homogeneous_points
+        # print(f'points_3d_homo_camera_frame shape {points_3d_homo_camera_frame.shape}, and real data:  {points_3d_homo_camera_frame}')
+
+        # Initialize a blank image
+        if img is not None and img.size > 0:
+            projected_image = img.copy()
+        else:
+            projected_image = np.zeros((self.img_height, self.img_width, 3), dtype=np.uint8)
+        # Map class indices to colors
+        class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
+        # print(f"landmark widths {landmark_widths} landmark_heights {landmark_heights}, 2dpoints {points_2d_homo}")
+
+        # Iterate over each projected point
+        json_out = {}
+        obj = []
+        tag_area = []
+        bounding_boxes = []
+        depths = []
+
+        pre_projected = projected_image.copy()
+        for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(
+                zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
+            x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
+            # Compute the Euclidean distance between the point and the camera position
+            Z = np.linalg.norm(point_3d - position)
+
+            # Pass if the landmark z location is behind the camera's location
+            # Project landmarks only less than 5m away from current position. need better algorithm to filter this.
+            if point_3d_camera_frame[2] < 0 or Z >= 5:
+                continue
+
+            # Scale widths and heights based on the depth
+            scale_factor_w = self.K[0, 0] / Z
+            scale_factor_h = self.K[1, 1] / Z
+            scaled_width = int(landmark_widths[i] * scale_factor_w)
+            scaled_height = int(landmark_heights[i] * scale_factor_h)
+
+            if 0 <= x < self.img_width and 0 <= y < self.img_height:
+                tlx = x - scaled_width // 2 if x - scaled_width // 2 >= 0 else 0
+                tly = y - scaled_height // 2 if y - scaled_height // 2 >= 0 else 0
+                brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
+                bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
+
+                bounding_boxes.append(((tlx, tly), (brx, bry)))
+                depths.append(Z)
+                b_size = 20
+                tag_tl, tag_br = self.tag_box(tlx, tly, brx, bry, b_size, tag_area)
+
+                obj_dic = {"label": landmark_classes[i],
+                           "x": x,
+                           "y": y,
+                           "z": Z,
+                           "i": i,
+                           "landmark_key": str(landmark_key)
+                           }
+                obj.append(obj_dic)
+
+
+        overlapping_indices = []
+        for i, (bbox1, depth1) in enumerate(zip(bounding_boxes, depths)):
+            for j, (bbox2, depth2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:])):
+                tl1, br1 = bbox1
+                tl2, br2 = bbox2
+                area1 = (br1[0] - tl1[0]) * (tl1[1] - br1[1])
+                area2 = (br2[0] - tl2[0]) * (tl2[1] - br2[1])
+
+                intersect_tl = (max(tl1[0], tl2[0]), min(tl1[1], tl2[1]))
+                intersect_br = (min(br1[0], br2[0]), max(br1[1], br2[1]))
+
+                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, intersect_tl[1] - intersect_br[1])
+
+                overlap = intersect_area / min(area1, area2)
+
+                if overlap > 0.7 and abs(depth1 - depth2) > 5:
+                    if depth1 > depth2:
+                        overlapping_indices.append(i)
+                    else:
+                        overlapping_indices.append(i + j + 1)
+
+        overlapping_indices = sorted(set(overlapping_indices), reverse=True)
+        for idx in overlapping_indices:
+            del bounding_boxes[idx]
+            del depths[idx]
+            del tag_area[idx]
+
+        for ((tlx, tly), (brx, bry)), (tlp_x, tlp_y, brp_x, brp_y), color in zip(bounding_boxes, tag_area, class_to_color.values()):
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, -1)  # tag
+            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # bounding box
+        alpha = 0.4
+        projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+        # print text on the image
+        for single_obj, tag in zip(obj, tag_area):
+            tag_name = f"[{single_obj['i']}]"
+            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                        (0, 0, 0), 1)
+
+        self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
+        self.vlm_cls_input = [d["label"] for d in obj]  # class name
+        self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
+
+        if self.save_projections:
+            self.frame_num += 1
+            json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
+            # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
+            json_out["contents"] = obj
+
+            self.save_img(img, projected_image)
+            self.save_json(json_out, self.output_dir)
+
+        self.vlm_img_input = projected_image
+        return projected_image
+
+
 
     def save_img(self, img, projected_image):
 
