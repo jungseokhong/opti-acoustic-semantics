@@ -45,12 +45,11 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
-
 class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_conf"
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_mocap_2"
         self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
@@ -214,8 +213,27 @@ class Compare2DMapAndImage:
 
         return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array, landmark_keys_array
 
+    def draw_dashed_rectangle(self, img, pt1, pt2, color = (0, 0, 0), thickness = 1, dash_length = 1):
+        x1, y1 = pt1
+        x2, y2 = pt2
+        # hor
+        for x in range(x1, x2, dash_length * 2):
+            cv2.line(img, (x, y1), (min(x + dash_length, x2), y1), color, thickness)
+            cv2.line(img, (x, y2), (min(x + dash_length, x2), y2), color, thickness)
+
+        # ver
+        for y in range(y1, y2, dash_length * 2):
+            cv2.line(img, (x1, y), (x1, min(y + dash_length, y2)), color, thickness)
+            cv2.line(img, (x2, y), (x2, min(y + dash_length, y2)), color, thickness)
+
     def tag_edge(self, edge, tlx, tly, brx, bry, box_size, add_w):
-        if edge == "tl":  # top_left
+
+        if edge == "tl_i":
+            tlp_y = tly  # inside
+            brp_y = tly + box_size
+            tlp_x = tlx
+            brp_x = tlx + box_size + add_w
+        elif edge == "tl_o":
             if tly - box_size < 0:
                 tlp_y = tly  # inside
                 brp_y = tly + box_size
@@ -224,16 +242,7 @@ class Compare2DMapAndImage:
                 brp_y = tly
             tlp_x = tlx
             brp_x = tlx + box_size + add_w
-        elif edge == "tr":
-            if tly - box_size < 0:
-                tlp_y = tly  # inside
-                brp_y = tly + box_size
-            else:
-                tlp_y = tly - box_size
-                brp_y = tly
-            tlp_x = brx - box_size - add_w
-            brp_x = brx
-        elif edge == "lt":
+        elif edge == "lt_o": #left-top
             if tlx - box_size - add_w < 0:
                 tlp_x = tlx  # inside
                 brp_x = tlx + box_size + add_w
@@ -242,7 +251,12 @@ class Compare2DMapAndImage:
                 brp_x = tlx
             tlp_y = tly
             brp_y = tly + box_size
-        elif edge == "rt":
+        elif edge == "rt_i":
+            tlp_x = brx - box_size - add_w  # inside
+            brp_x = brx
+            tlp_y = tly
+            brp_y = tly + box_size
+        elif edge == "rt_o":
             if brx + box_size + add_w > self.img_width:
                 tlp_x = brx - box_size - add_w  # inside
                 brp_x = brx
@@ -251,7 +265,12 @@ class Compare2DMapAndImage:
                 brp_x = brx + box_size + add_w
             tlp_y = tly
             brp_y = tly + box_size
-        elif edge == "bl":
+        elif edge == "bl_i":
+            tlp_y = bry - box_size  # inside
+            brp_y = bry
+            tlp_x = tlx
+            brp_x = tlx + box_size + add_w
+        elif edge == "bl_o":
             if bry + box_size > self.img_height:
                 tlp_y = bry - box_size  # inside
                 brp_y = bry
@@ -260,7 +279,13 @@ class Compare2DMapAndImage:
                 brp_y = bry + box_size
             tlp_x = tlx
             brp_x = tlx + box_size + add_w
-        else:  # edge == "br"
+
+        elif edge == "br_i":
+            tlp_y = bry - box_size  # inside
+            brp_y = bry
+            tlp_x = brx - box_size - add_w
+            brp_x = brx
+        else: #edge == "br_o":
             if bry + box_size > self.img_height:
                 tlp_y = bry - box_size  # inside
                 brp_y = bry
@@ -269,11 +294,12 @@ class Compare2DMapAndImage:
                 brp_y = bry + box_size
             tlp_x = brx - box_size - add_w
             brp_x = brx
+
         return ((tlp_x, tlp_y), (brp_x, brp_y))
 
     def tag_box(self, tlx, tly, brx, bry, box_size, tag_area):
-        add_w = 10
-        edge = ["tl", "tr", "bl", "br", "lt", "rt"]
+        add_w = int(box_size // 1.3)
+        edge = ["tl_i", "tl_o", "lt_o", "rt_i", "rt_o", "bl_i", "bl_o", "br_i", "br_o", "tl_i"]
 
         for edge_mode in edge:
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_edge(edge_mode, tlx, tly, brx, bry, box_size, add_w)
@@ -354,8 +380,12 @@ class Compare2DMapAndImage:
         json_out = {}
         obj = []
         tag_area = []
+
+        self.vlm_img_input = []
+        self.vlm_img_input.append(img.copy())
         for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(
                 zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
+
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
@@ -378,23 +408,37 @@ class Compare2DMapAndImage:
             # Optionally add class labels next to the bounding box
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
                 color = class_to_color[i]
-                # Calculate top-left and bottom-right corners
-                tlx = x - scaled_width // 2 if x - scaled_width // 2 >= 0 else 0
-                tly = y - scaled_height // 2 if y - scaled_height // 2 >= 0 else 0
-                brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
-                bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
 
+                # increse bbox size + 5%
+                add_w = int((scaled_width * 1.05) // 2)
+                add_h = int((scaled_height * 1.05) // 2)
+                # Calculate top-left and bottom-right corners
+                tlx = (x - scaled_width // 2) - add_w if (x - scaled_width // 2) - add_w >= 0 else 1
+                tly = (y - scaled_height // 2) - add_h if (y - scaled_height // 2) - add_h >= 0 else 1
+                brx = (x + scaled_width // 2) + add_w if (x + scaled_width // 2) + add_w < self.img_width else self.img_width - 2
+                bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height else self.img_height - 2
+
+                ##crop an img
+                self.vlm_img_input.append(img[tly:bry, tlx:brx])
+                # frame_num_txt = "{:05d}".format(self.frame_num + 1)
+                # cv2.imwrite(f"{self.output_dir}/{frame_num_txt}_{i}.png", img[tly:bry, tlx:brx])
+
+                ##drawing
                 # tag_box
-                b_size = 20
+                b_size = 25
                 tag_tl, tag_br = self.tag_box(tlx, tly, brx, bry, b_size, tag_area)
 
                 # Draw the bounding box
                 pre_projected = projected_image.copy()
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, -1)  # tag
-                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # boudingbox 1 - 0.45
+                cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # boudingbox 1 - 0.45
 
                 alpha = 0.4
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+                cv2.rectangle(projected_image, tag_tl, tag_br, color, 1)  # tag
+                #cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
+                self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length = 5)
 
                 # tag_name = f"[{i}]"
                 # cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -413,8 +457,8 @@ class Compare2DMapAndImage:
         # print text on the image
         for single_obj, tag in zip(obj, tag_area):
             tag_name = f"[{single_obj['i']}]"
-            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (0, 0, 0), 1)
+            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
+                        (0, 0, 0), 1, cv2.LINE_AA)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -429,7 +473,8 @@ class Compare2DMapAndImage:
             self.save_img(img, projected_image)
             self.save_json(json_out, self.output_dir)
 
-        self.vlm_img_input = projected_image
+        # self.vlm_img_input = projected_image
+        self.vlm_img_input[0] = projected_image
         return projected_image
 
     def save_img(self, img, projected_image):
@@ -487,7 +532,7 @@ class Compare2DMapAndImage:
         str_response = return_str(vlm_response)
         return str_response
 
-    def memory_manipulation(self, vlm_filter):
+    def memory_injection(self, vlm_filter):
         user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
         commant = """\nExamples of each step's output for the given image and its tags:\n"""
         assistant_commant = """Step 1. 
@@ -568,6 +613,7 @@ Step 5.
             print("no landmark")
             return True
 
+
         # copy necessary vars
         frame_num = self.frame_num
         vlm_cls_input_idx = self.vlm_cls_input_idx
@@ -581,18 +627,26 @@ Step 5.
 
         ##edit a text input
         txt_input = []
+        tag_num = []
         for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
             txt_input.append(f"{cls_name}: {cls_num}")
+            tag_num.append(cls_num)
         txt_input = ", ".join(txt_input)
-        print(f"[text input] {txt_input}")
+
+        #vlm_img_input = vlm_img_input[1:]
+        vlm_img_input = vlm_img_input[0]
+        #txt_input = f"The first image has bounding boxes; the next images are cropped from {tag_num}.\n[given tags] " #+ txt_input
+        #txt_input = f"The first image has bounding boxes; the next images are cropped."  # + txt_input
+        #txt_input = f"The images are cropped from {tag_num}.\n[given tags] "  # + txt_input
+        print(f"{txt_input}")
 
         # save an input img
         # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
 
         if not self.compare_promts:
 
-            self.vlm_filter.reset_memory()  # re
-            # self.memory_manipulation(self.vlm_filter) # Add examples of the response I want
+            self.vlm_filter.reset_memory()  # remove memorise
+            # self.memory_injection(self.vlm_filter) # Add examples of the response I want
 
             str_response1 = self.call_api_with_img(self.vlm_filter, vlm_img_input, txt_input)
 

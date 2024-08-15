@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import pathlib
@@ -23,8 +24,8 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.7 #0.76  # Confidence threshold used for the detector, default is 0.5
-OBJECT_DEPTH_TRHES = 10.0  #3.0  # Depth threshold for objects, default is 5.0
+DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
+OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 
 
 def unproject(u, v, depth, cam_info):
@@ -89,7 +90,7 @@ class ClosedSetDetector:
             sys.path.append(os.environ['DINO'])
             from demos.ram_grounded_sam import load_models, GraundedSamArgs, run_single_image
             # setting up
-            GraundedSamArgs.visualize_SAM = False  # todo uss GPU!
+            GraundedSamArgs.visualize_SAM = False
             self.models = load_models()
             self.inference = run_single_image
             self.classes = {}
@@ -101,6 +102,7 @@ class ClosedSetDetector:
             self.classes = self.inference.names
             # for idx in self.infernce.names:
             #     self.classes[self.infernce.names[idx]] = idx
+
         rospy.loginfo("Model loaded")
 
         self.objs_pub = rospy.Publisher("/camera/objects", ObjectsVector, queue_size=10)
@@ -206,19 +208,18 @@ class ClosedSetDetector:
             class_names_string = ", ".join(classNames)
 
         else:  # self.method = "ram"
-            from demos.ram_grounded_sam import run_single_image
 
             image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
             depth_m = self.br.imgmsg_to_cv2(depth, "32FC1")
 
             height, width = image_cv.shape[:2]
-            detections, classes, visualization = self.inference(image=image_cv, models=self.models, th_conf=DETECTOR__CONF_THRESH)
+            detections, classes, visualization = self.inference(image=image_cv, models=self.models,
+                                                                th_conf=DETECTOR__CONF_THRESH)
 
             if len(classes) < 1:
                 return
 
-
-            #visualization?
+            # visualization?
             im = PILImage.fromarray(visualization)
             msg_yolo_detections = RosImage()
             msg_yolo_detections.header.stamp = rgb.header.stamp
@@ -228,6 +229,7 @@ class ClosedSetDetector:
             msg_yolo_detections.is_bigendian = False
             msg_yolo_detections.step = 3 * im.width
             msg_yolo_detections.data = np.array(im).tobytes()
+
             self.img_pub.publish(msg_yolo_detections)
 
             masks, bboxes, class_ids, confs = [], [], [], []
@@ -235,6 +237,13 @@ class ClosedSetDetector:
 
                 if class_id is None:
                     continue
+
+                # todo remove this part later
+                if classes[class_id] in ['ceiling', 'floor', 'wall', 'room', 'classroom',
+                                         'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom', 'dressing',
+                                         'black', 'yellow', 'red', 'blue', 'white']:  # remove too general classes
+                    continue
+
                 bboxes.append(xyxy)
 
                 if mask is None:
@@ -252,8 +261,6 @@ class ClosedSetDetector:
 
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
-            '''
-            '''
 
         if len(masks) == 0:
             return
@@ -287,7 +294,8 @@ class ClosedSetDetector:
             fx = cam_info.K[0]
             fy = cam_info.K[4]
 
-            object.bbox_width, object.bbox_height = compute_w_h_in_3d(bboxes[2]-bboxes[0], bboxes[3]-bboxes[1], obj_depth, fx, fy)
+            object.bbox_width, object.bbox_height = compute_w_h_in_3d(bboxes[2] - bboxes[0], bboxes[3] - bboxes[1],
+                                                                      obj_depth, fx, fy)
 
             if (conf < DETECTOR__CONF_THRESH):
                 object.geometric_centroid.x = np.nan
@@ -307,7 +315,6 @@ class ClosedSetDetector:
             #     continue
 
             objects.objects.append(object)
-
 
         objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
