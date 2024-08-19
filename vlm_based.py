@@ -26,7 +26,15 @@ CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
+DETECTOR_VISUALIZATION_THRESHOLD = 0.6 # visualization threshold for RAM+DINO model
 
+debug = True  # debugging mode
+debug_frame_num = 0
+debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
+general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
+                             'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom',
+                             'dressing',
+                             'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
     """
@@ -214,7 +222,7 @@ class ClosedSetDetector:
 
             height, width = image_cv.shape[:2]
             detections, classes, visualization = self.inference(image=image_cv, models=self.models,
-                                                                th_conf=DETECTOR__CONF_THRESH)
+                                                                visualization_threshold=DETECTOR_VISUALIZATION_THRESHOLD)
 
             if len(classes) < 1:
                 return
@@ -232,6 +240,28 @@ class ClosedSetDetector:
 
             self.img_pub.publish(msg_yolo_detections)
 
+            #####
+            # save frames with the confidences
+            if debug:
+                global debug_frame_num
+                debug_frame_num += 1
+                out_name = f"{debug_output_path}/frame_{debug_frame_num:04}.png"
+                pathlib.Path(debug_output_path).mkdir(exist_ok=True, parents=True)
+                cv2.imwrite(out_name, visualization)
+
+                out_name = f"{debug_output_path}/confidences.txt"
+                with open(out_name, 'a', encoding='utf-8') as file:
+                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
+                    for i in range(len(detections.confidence)):
+                        file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
+                                   f"{detections.confidence[i]}\t"
+                                   f"{detections.ram_conf[i]}\t"
+                                   f"{(detections.confidence[i] + detections.ram_conf[i]) / 2}\t"
+                                   f"{detections.confidence[i] * detections.ram_conf[i]}\n")
+
+                print(f"Data saved to {out_name}")
+            #####
+
             masks, bboxes, class_ids, confs = [], [], [], []
             for xyxy, mask, confidence, class_id, _, _ in detections:
 
@@ -239,9 +269,7 @@ class ClosedSetDetector:
                     continue
 
                 # todo remove this part later
-                if classes[class_id] in ['ceiling', 'floor', 'wall', 'room', 'classroom',
-                                         'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom', 'dressing',
-                                         'black', 'yellow', 'red', 'blue', 'white']:  # remove too general classes
+                if classes[class_id] in general_classes_to_remove:  # remove too general classes
                     continue
 
                 bboxes.append(xyxy)
