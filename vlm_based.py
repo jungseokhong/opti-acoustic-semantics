@@ -262,9 +262,9 @@ class ClosedSetDetector:
                 print(f"Data saved to {out_name}")
             #####
 
-            masks, bboxes, class_ids, confs = [], [], [], []
-            for xyxy, mask, confidence, class_id, _, _ in detections:
-
+            masks, bboxes, class_ids, confs, ram_confs = [], [], [], [], []
+            for i, (xyxy, mask, confidence, class_id, _, _) in enumerate(detections):
+                # print(f'confidence: {confidence}, conf i: {detections.confidence[i]}, ram conf i: {detections.ram_conf[i]}')
                 if class_id is None:
                     continue
 
@@ -286,13 +286,14 @@ class ClosedSetDetector:
 
                 class_ids.append(new_cls_id[0])
                 confs.append(confidence)
+                ram_confs.append(detections.ram_conf[i])
 
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
 
         if len(masks) == 0:
             return
-        for mask, class_id, bboxes, conf in zip(masks, class_ids, bboxes, confs):
+        for mask, class_id, bboxes, conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
@@ -336,6 +337,8 @@ class ClosedSetDetector:
             #####todo: might need to change it?
             object.latent_centroid[class_id] = 1
             object.class_id = class_id
+            object.det_conf = conf
+            object.ram_conf = ram_conf
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
