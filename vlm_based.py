@@ -26,7 +26,15 @@ CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
+DETECTOR_VISUALIZATION_THRESHOLD = 0.6 # visualization threshold for RAM+DINO model
 
+debug = True  # debugging mode
+debug_frame_num = 0
+debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
+general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
+                             'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom',
+                             'dressing',
+                             'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
     """
@@ -214,7 +222,7 @@ class ClosedSetDetector:
 
             height, width = image_cv.shape[:2]
             detections, classes, visualization = self.inference(image=image_cv, models=self.models,
-                                                                th_conf=DETECTOR__CONF_THRESH)
+                                                                visualization_threshold=DETECTOR_VISUALIZATION_THRESHOLD)
 
             if len(classes) < 1:
                 return
@@ -232,16 +240,36 @@ class ClosedSetDetector:
 
             self.img_pub.publish(msg_yolo_detections)
 
-            masks, bboxes, class_ids, confs = [], [], [], []
-            for xyxy, mask, confidence, class_id, _, _ in detections:
+            #####
+            # save frames with the confidences
+            if debug:
+                global debug_frame_num
+                debug_frame_num += 1
+                out_name = f"{debug_output_path}/frame_{debug_frame_num:04}.png"
+                pathlib.Path(debug_output_path).mkdir(exist_ok=True, parents=True)
+                cv2.imwrite(out_name, visualization)
 
+                out_name = f"{debug_output_path}/confidences.txt"
+                with open(out_name, 'a', encoding='utf-8') as file:
+                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
+                    for i in range(len(detections.confidence)):
+                        file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
+                                   f"{detections.confidence[i]}\t"
+                                   f"{detections.ram_conf[i]}\t"
+                                   f"{(detections.confidence[i] + detections.ram_conf[i]) / 2}\t"
+                                   f"{detections.confidence[i] * detections.ram_conf[i]}\n")
+
+                print(f"Data saved to {out_name}")
+            #####
+
+            masks, bboxes, class_ids, confs, ram_confs = [], [], [], [], []
+            for i, (xyxy, mask, confidence, class_id, _, _) in enumerate(detections):
+                # print(f'confidence: {confidence}, conf i: {detections.confidence[i]}, ram conf i: {detections.ram_conf[i]}')
                 if class_id is None:
                     continue
 
                 # todo remove this part later
-                if classes[class_id] in ['ceiling', 'floor', 'wall', 'room', 'classroom',
-                                         'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom', 'dressing',
-                                         'black', 'yellow', 'red', 'blue', 'white']:  # remove too general classes
+                if classes[class_id] in general_classes_to_remove:  # remove too general classes
                     continue
 
                 bboxes.append(xyxy)
@@ -258,13 +286,14 @@ class ClosedSetDetector:
 
                 class_ids.append(new_cls_id[0])
                 confs.append(confidence)
+                ram_confs.append(detections.ram_conf[i])
 
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
 
         if len(masks) == 0:
             return
-        for mask, class_id, bboxes, conf in zip(masks, class_ids, bboxes, confs):
+        for mask, class_id, bboxes, conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
@@ -308,6 +337,8 @@ class ClosedSetDetector:
             #####todo: might need to change it?
             object.latent_centroid[class_id] = 1
             object.class_id = class_id
+            object.det_conf = conf
+            object.ram_conf = ram_conf
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
