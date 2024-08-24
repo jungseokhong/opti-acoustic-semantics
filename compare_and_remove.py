@@ -76,8 +76,8 @@ class Compare2DMapAndImage:
         self.colors = generate_unique_colors(self.num_classes)  # Generate unique colors for these classes
 
         self.bridge = CvBridge()
-        # self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
-        self.yoloimg_sub = message_filters.Subscriber('/zed2i/zed_node/rgb/image_rect_color', RosImage)
+        self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
+        self.rgb_sub = message_filters.Subscriber('/zed2i/zed_node/rgb/image_rect_color', RosImage)
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.classlist_sub = message_filters.Subscriber('/camera/objects', ObjectsVector)
 
@@ -88,11 +88,12 @@ class Compare2DMapAndImage:
 
         # Use a cache for the mapinfo_sub to store messages
         self.mapinfo_cache = message_filters.Cache(self.mapinfo_sub, 500)
+        self.rgb_cache = message_filters.Cache(self.rgb_sub, 500)
         self.yoloimg_cache = message_filters.Cache(self.yoloimg_sub, 500)
         self.classlist_cache = message_filters.Cache(self.classlist_sub, 500)
 
         self.sync = message_filters.ApproximateTimeSynchronizer(
-            (self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
+            (self.rgb_sub, self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
         )  # 0.025 need to reduce this time difference
         # # need to update so it can handle time offset/pass time offset
 
@@ -126,7 +127,7 @@ class Compare2DMapAndImage:
                            [0, fy, cy],
                            [0, 0, 1]])
 
-    def forward_pass(self, yoloimg: RosImage, map_info: MapInfo, objects_info: ObjectsVector) -> None:
+    def forward_pass(self, rgbimg: RosImage, yoloimg: RosImage, map_info: MapInfo, objects_info: ObjectsVector) -> None:
 
         # Print the timestamps of the messages
         yoloimg_time = yoloimg.header.stamp
@@ -147,6 +148,7 @@ class Compare2DMapAndImage:
 
         # Convert ROS Image to OpenCV Image
         yoloimg_cv = self.bridge.imgmsg_to_cv2(yoloimg, desired_encoding='bgr8')
+        rgbimg_cv = self.bridge.imgmsg_to_cv2(rgbimg, desired_encoding='bgr8')
         # print(map_info)
 
         # Extract data from map_info
@@ -156,11 +158,11 @@ class Compare2DMapAndImage:
         projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points,
                                                                      landmark_classes,
                                                                      landmark_widths, landmark_heights, landmark_keys,
-                                                                     img=yoloimg_cv)
+                                                                     img=rgbimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
-        # combined_image = self.combine_images(yoloimg_cv, projected_image)
+        combined_image = self.combine_images(yoloimg_cv, projected_image)
         combined_image = projected_image
         self.classstring = objects_info.classlist.data
 
