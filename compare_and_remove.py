@@ -163,7 +163,7 @@ class Compare2DMapAndImage:
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
         combined_image = self.combine_images(yoloimg_cv, projected_image)
-        combined_image = projected_image
+        # combined_image = projected_image
         self.classstring = objects_info.classlist.data
 
         # Convert the combined OpenCV image back to ROS Image
