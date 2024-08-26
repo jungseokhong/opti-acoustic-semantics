@@ -791,7 +791,8 @@ class Compare2DMapAndImage:
         # # replace a cls id to a cls name
         # list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
         #                     list_from_idx]
-        modify_dic = {1: "red book", 3: "blue cup"}
+        # modify_dic = {1: "red book", 0: "blue cup"}
+        modify_dic = {0: "blue cup"}
 
         return modify_dic
 
@@ -888,9 +889,11 @@ class Compare2DMapAndImage:
 
             ## TODO: modify landmark class
             modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input,vlm_cls_input_idx)
+            print("modify_dic : ", modify_dic)
             self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
-            self.newclasses_for_landmarks = modify_dic.values() ## need to double check this
-
+            print("landmark_keys_to_modify : ", self.landmark_keys_to_modify)
+            self.newclasses_for_landmarks = list(modify_dic.values()) ## need to double check this
+            print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
 
 
 
@@ -1019,15 +1022,15 @@ if __name__ == "__main__":
     while not rospy.is_shutdown():
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
-        for landmark_key in detector.landmark_keys:
-            success = detector.call_remove_landmark_service(landmark_key)
-            rospy.loginfo("Service call success: %s" % success)
-        detector.landmark_keys = []
+        # for landmark_key in detector.landmark_keys:
+        #     success = detector.call_remove_landmark_service(landmark_key)
+        #     rospy.loginfo("Service call success: %s" % success)
+        # detector.landmark_keys = []
 
 
         ## TODO: debug this part
         for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
-
+            print("here=====================================")
             ## implement dictionary for to have new class name for each landmark_key
             success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
             rospy.loginfo("Service call success: %s" % success)
