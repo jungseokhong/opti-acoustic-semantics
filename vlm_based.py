@@ -14,6 +14,7 @@ import torch
 from cv_bridge import CvBridge
 import cv2
 from semanticslam_ros.msg import ObjectsVector, ObjectVector
+from semanticslam_ros.srv import UpdateClasslist, UpdateClasslistResponse, UpdateClasslistRequest
 from sensor_msgs.msg import CameraInfo, Image
 
 from PIL import Image as PILImage
@@ -91,6 +92,9 @@ class ClosedSetDetector:
 
         method: Literal["yolo", "ram"] = "ram"
         self.method = method
+        rospy.loginfo("detector started")
+        rospy.loginfo("updateclasslist service started")
+        self.update_classes_service = rospy.Service('/update_classelist', UpdateClasslist, self.handle_update_classes)
 
         if method == "ram":
             import sys
@@ -102,6 +106,7 @@ class ClosedSetDetector:
             self.models = load_models()
             self.inference = run_single_image
             self.classes = {}
+            self.classlist =""
 
         else:
             from ultralytics import YOLO
@@ -153,6 +158,13 @@ class ClosedSetDetector:
         )
 
         self.sync.registerCallback(self.forward_pass)
+
+    def handle_update_classes(self, req):
+        # Example handler, adjust according to your needs
+        # Assuming req.data is a string containing the new class list
+        self.classlist = req.landmark_class
+        rospy.loginfo(f"Updated classes: {self.classlist}")
+        return UpdateClasslistResponse(success=True, message="Classlist updated successfully")
 
     def forward_pass(self, cam_info: CameraInfo, rgb: Image, depth: Image) -> None:
         """
@@ -279,6 +291,7 @@ class ClosedSetDetector:
                     mask[int(xyxy[1]):int(xyxy[3]), int(xyxy[0]):int(xyxy[2])] = 1.0
                 masks.append(mask)
 
+                ## subscribe and update self.classes here?
                 if classes[class_id] not in self.classes.values():
                     self.classes[len(self.classes)] = classes[class_id]
 
@@ -293,7 +306,8 @@ class ClosedSetDetector:
 
         if len(masks) == 0:
             return
-        for mask, class_id, bboxes, conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):            # ---- Object Vector ----
+        for mask, class_id, bboxes, conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):            
+            # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
 
@@ -346,6 +360,15 @@ class ClosedSetDetector:
 
             objects.objects.append(object)
 
+        ## subscibe class_names_string topic and update the class_names_string? If service was called..
+
+        
+        ## update the class_names_string
+        if self.classlist != "":
+            print(f'updating classlist: {self.classlist}')
+            class_names_string = self.classlist
+            self.classlist = ""
+        
         objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
 

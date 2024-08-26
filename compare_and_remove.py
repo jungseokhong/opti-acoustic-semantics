@@ -20,6 +20,8 @@ from sensor_msgs.msg import Image as RosImage
 from scipy.spatial.transform import Rotation as R
 from semanticslam_ros.srv import RemoveClass, RemoveClassRequest
 from semanticslam_ros.srv import RemoveLandmark, RemoveLandmarkRequest
+from semanticslam_ros.srv import ModifyLandmark, ModifyLandmarkRequest
+
 from ast import literal_eval
 
 from vlm_filter_utils import vision_filter
@@ -71,6 +73,8 @@ class Compare2DMapAndImage:
         self.classlist = []
         self.classstring = ""
         self.landmark_keys = []  # stores keys to remove landmarks
+        self.landmark_keys_to_modify = []  # stores keys to modify landmarks
+        self.newclasses_for_landmarks = []  # stores new classes for landmarks
 
         self.num_classes = 20  # Example: Specify the number of classes
         self.colors = generate_unique_colors(self.num_classes)  # Generate unique colors for these classes
@@ -770,6 +774,27 @@ class Compare2DMapAndImage:
 
         return list_from_string, list_from_idx
 
+    ## TODO: finalize this function
+    def return_landmarks_to_modify(self, str_response, vlm_cls_input, vlm_cls_input_idx):
+        ## Extract the part of the string that represents the list
+        # list_from_idx = str_response.split('=')[-1].strip()
+        ## hopefully, str_response has a idx for each landmark and what to change it do.
+        ## e.g. [1] -> "red book"
+        # return 1: "red book", 3 : "blue cup"
+
+        # try:
+        #     list_from_idx = literal_eval(list_from_idx)
+        # except:
+        #     print(f"\nerror during extract the result list..{list_from_idx}\n")
+        #     list_from_idx = []  # prevent the program from stopping
+
+        # # replace a cls id to a cls name
+        # list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+        #                     list_from_idx]
+        modify_dic = {1: "red book", 3: "blue cup"}
+
+        return modify_dic
+
 
     def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir, json_name):
         ##save it to json file
@@ -860,6 +885,13 @@ class Compare2DMapAndImage:
             #                                                                  vlm_cls_input_idx)
             # self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
             #                        "out of format", self.output_dir, "results2.json")
+
+            ## TODO: modify landmark class
+            modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input,vlm_cls_input_idx)
+            self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
+            self.newclasses_for_landmarks = modify_dic.values() ## need to double check this
+
+
 
 
         else:  # multi-threading
@@ -966,6 +998,19 @@ class Compare2DMapAndImage:
             rospy.logerr("Service call failed: %s" % e)
             return False
 
+    ## TODO: Modifylandmark service implementation
+    # this need to change the lm_to_class, etc
+    def call_modify_landmark_service(self, landmark_key, landmark_class):
+        rospy.wait_for_service('modify_landmark')
+        try:
+            modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
+            req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
+            res = modify_landmark(req)
+            return res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
+
 
 if __name__ == "__main__":
     rospy.init_node("landmarks_comparison_and_removal")
@@ -978,5 +1023,15 @@ if __name__ == "__main__":
             success = detector.call_remove_landmark_service(landmark_key)
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
+
+
+        ## TODO: debug this part
+        for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
+
+            ## implement dictionary for to have new class name for each landmark_key
+            success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
+            rospy.loginfo("Service call success: %s" % success)
+        detector.landmark_keys_to_modify = []
+        detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
         rospy.sleep(7)  # Simulate processing time 10
