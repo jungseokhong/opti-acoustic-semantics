@@ -1007,6 +1007,7 @@ class Compare2DMapAndImage:
         rospy.wait_for_service('modify_landmark')
         try:
             modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
+            print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
             req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
             res = modify_landmark(req)
             return res.success
@@ -1022,11 +1023,11 @@ if __name__ == "__main__":
     while not rospy.is_shutdown():
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
-        # for landmark_key in detector.landmark_keys:
-        #     success = detector.call_remove_landmark_service(landmark_key)
-        #     rospy.loginfo("Service call success: %s" % success)
-        # detector.landmark_keys = []
 
+        for landmark_key in detector.landmark_keys:
+            success = detector.call_remove_landmark_service(landmark_key)
+            rospy.loginfo("Service call success: %s" % success)
+        detector.landmark_keys = []
 
         ## TODO: debug this part
         for i, landmark_key in enumerate(detector.landmark_keys_to_modify):

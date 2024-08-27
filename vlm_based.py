@@ -94,7 +94,7 @@ class ClosedSetDetector:
         self.method = method
         rospy.loginfo("detector started")
         rospy.loginfo("updateclasslist service started")
-        self.update_classes_service = rospy.Service('/update_classelist', UpdateClasslist, self.handle_update_classes)
+        self.update_classes_service = rospy.Service('/update_classlist', UpdateClasslist, self.handle_update_classes)
 
         if method == "ram":
             import sys
@@ -107,6 +107,7 @@ class ClosedSetDetector:
             self.inference = run_single_image
             self.classes = {}
             self.classlist =""
+            self.classes_from_list = {}
 
         else:
             from ultralytics import YOLO
@@ -159,12 +160,26 @@ class ClosedSetDetector:
 
         self.sync.registerCallback(self.forward_pass)
 
+    def update_classes_from_list(self):
+        """
+        Update self.classes dictionary from the string self.classlist.
+        """
+        # Split the classlist string into a list of class names
+        class_names = self.classlist.split(", ")
+
+        # Convert the list of class names into a dictionary with indices as keys
+        self.classes = {i: class_name for i, class_name in enumerate(class_names)}
+        rospy.loginfo(f"Classes updated: {self.classes}")
+
     def handle_update_classes(self, req):
         # Example handler, adjust according to your needs
         # Assuming req.data is a string containing the new class list
-        self.classlist = req.landmark_class
+        self.classlist = req.landmark_class.data
         rospy.loginfo(f"Updated classes: {self.classlist}")
-        return UpdateClasslistResponse(success=True, message="Classlist updated successfully")
+
+        # Update self.classes after receiving new classlist
+        self.update_classes_from_list()
+        return UpdateClasslistResponse(success=True)
 
     def forward_pass(self, cam_info: CameraInfo, rgb: Image, depth: Image) -> None:
         """
@@ -298,6 +313,7 @@ class ClosedSetDetector:
                 new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
 
                 class_ids.append(new_cls_id[0])
+                print(f'class_ids: {class_ids} new_cls_id: {new_cls_id[0]} class_name: {classes[class_id]} self.classes: {self.classes}')
                 confs.append(confidence)
                 ram_confs.append(detections.ram_conf[i])
 
@@ -362,7 +378,7 @@ class ClosedSetDetector:
 
         ## subscibe class_names_string topic and update the class_names_string? If service was called..
 
-        
+        print(f'classlist: {self.classlist} class_names_string: {class_names_string}')
         ## update the class_names_string
         if self.classlist != "":
             print(f'updating classlist: {self.classlist}')
