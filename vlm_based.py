@@ -378,12 +378,12 @@ class ClosedSetDetector:
 
         ## subscibe class_names_string topic and update the class_names_string? If service was called..
 
-        print(f'classlist: {self.classlist} class_names_string: {class_names_string}')
+        print(f'classes: {self.classes} classlist: {self.classlist} class_names_string: {class_names_string}')
         ## update the class_names_string
-        if self.classlist != "":
-            print(f'updating classlist: {self.classlist}')
-            class_names_string = self.classlist
-            self.classlist = ""
+        # if self.classlist != "":
+        #     print(f'updating classlist: {self.classlist}')
+        #     class_names_string = self.classlist
+        #     self.classlist = ""
         
         objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
