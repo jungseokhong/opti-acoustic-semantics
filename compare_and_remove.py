@@ -47,6 +47,7 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
+MODIFY_FUNCTION = False
 
 class Compare2DMapAndImage:
     def __init__(self):
@@ -887,13 +888,14 @@ class Compare2DMapAndImage:
             # self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
             #                        "out of format", self.output_dir, "results2.json")
 
-            ## TODO: modify landmark class
-            modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input,vlm_cls_input_idx)
-            print("modify_dic : ", modify_dic)
-            self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
-            print("landmark_keys_to_modify : ", self.landmark_keys_to_modify)
-            self.newclasses_for_landmarks = list(modify_dic.values()) ## need to double check this
-            print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
+            if MODIFY_FUNCTION:
+                ## TODO: modify landmark class
+                modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input,vlm_cls_input_idx)
+                print("modify_dic : ", modify_dic)
+                self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
+                print("landmark_keys_to_modify : ", self.landmark_keys_to_modify)
+                self.newclasses_for_landmarks = list(modify_dic.values()) ## need to double check this
+                print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
 
 
 
@@ -1029,13 +1031,15 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
 
-        ## TODO: debug this part
-        for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
-            print("here=====================================")
-            ## implement dictionary for to have new class name for each landmark_key
-            success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
-            rospy.loginfo("Service call success: %s" % success)
-        detector.landmark_keys_to_modify = []
-        detector.newclasses_for_landmarks = []
+        if MODIFY_FUNCTION:
+            ## TODO: debug this part
+            ## TODO: how to handle the case when detector.landmark_keys overlaps with detector.landmark_keys_to_modify
+            for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
+                print("here=====================================")
+                ## implement dictionary for to have new class name for each landmark_key
+                success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
+                rospy.loginfo("Service call success: %s" % success)
+            detector.landmark_keys_to_modify = []
+            detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
         rospy.sleep(7)  # Simulate processing time 10
