@@ -719,7 +719,7 @@ class Compare2DMapAndImage:
 
 
     def call_api_with_img(self, vlm_filter, vlm_img_input, txt_input):
-        vlm_response = vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
+        vlm_response = vlm_filter.call_vision_agent_with_image_input(imgs=vlm_img_input, command=txt_input, client=self.client)
         str_response = return_str(vlm_response)
         return str_response
 
@@ -1042,4 +1042,4 @@ if __name__ == "__main__":
             detector.landmark_keys_to_modify = []
             detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time 10
+        rospy.sleep(3)  # Simulate processing time 10

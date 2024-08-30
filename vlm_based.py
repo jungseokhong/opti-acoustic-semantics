@@ -33,8 +33,9 @@ debug = True  # debugging mode
 debug_frame_num = 0
 debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
 general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
-                             'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom',
-                             'dressing',
+                             'window', 'floor', 'ceiling', 'carpet', 'mat',
+                             'restroom', 'bathroom', 'dressing',
+                             'person', 'child',
                              'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
@@ -279,14 +280,16 @@ class ClosedSetDetector:
                 out_name = f"{debug_output_path}/confidences.txt"
                 with open(out_name, 'a', encoding='utf-8') as file:
                     file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
+                    file.write(f"detected : {classes}\n")
                     for i in range(len(detections.confidence)):
                         file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
                                    f"{detections.confidence[i]}\t"
                                    f"{detections.ram_conf[i]}\t"
                                    f"{(detections.confidence[i] + detections.ram_conf[i]) / 2}\t"
                                    f"{detections.confidence[i] * detections.ram_conf[i]}\n")
+                    file.write("\n")
 
-                print(f"Data saved to {out_name}")
+                #print(f"Data saved to {out_name}")
             #####
 
             masks, bboxes, class_ids, confs, ram_confs = [], [], [], [], []

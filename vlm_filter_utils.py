@@ -8,13 +8,15 @@ class vision_filter(PrefixProto):
     model: str = "gpt-4o"
     map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
     database_dir = None
+    temperature = 0.1
+    max_tokens = 700
     system_prompt = """
    You are an assistant that identifies incorrect tags. You respond according to the given steps.
    Step 1. Verify that each tag matches the object in its bounding box.
        example 1:
        Tag 1 (bag): Correct.
-       Tag 4 (apple): Incorrect. It is a [object name in the bounding box]
-       Tag 6 (ball): Correct
+       Tag 4 (apple): Incorrect. 
+       Tag 6 (soccer ball): Correct
        Tag 7 (ball): Correct
    Step 2. Determine if there are multiple tags pointing to the same object and return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
        example 1:
