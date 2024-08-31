@@ -33,7 +33,7 @@ debug = True  # debugging mode
 debug_frame_num = 0
 debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
 general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
-                             'window', 'floor', 'ceiling', 'carpet', 'mat',
+                              'floor', 'ceiling', 'carpet', 'mat',
                              'restroom', 'bathroom', 'dressing',
                              'person', 'child',
                              'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
@@ -325,7 +325,11 @@ class ClosedSetDetector:
 
         if len(masks) == 0:
             return
-        for mask, class_id, bboxes, conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):            
+        for mask, class_id, bboxes, dino_conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
+
+            #confidence to get =  (dino's conf + ram's conf) / 2
+            conf = (dino_conf + ram_conf) / 2
+
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
