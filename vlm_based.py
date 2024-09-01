@@ -27,7 +27,7 @@ CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
-DETECTOR_VISUALIZATION_THRESHOLD = 0.6 # visualization threshold for RAM+DINO model
+DETECTOR_VISUALIZATION_THRESHOLD = 0.6 # visualization threshold for (RAM+DINO)/2
 
 debug = True  # debugging mode
 debug_frame_num = 0
