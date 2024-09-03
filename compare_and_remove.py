@@ -515,7 +515,7 @@ class Compare2DMapAndImage:
 
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
                         class_to_color, alpha=0.4, tag_box_size=25):
-        tag_area = [] # To determine if tags  are overlapping
+        tag_area = []  # To determine if tags  are overlapping
         for ((tlx, tly), (brx, bry)), color in zip(bounding_boxes, class_to_color.values()):
             # get tag_box positions
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
@@ -535,7 +535,6 @@ class Compare2DMapAndImage:
             cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
                         (0, 0, 0), 1, cv2.LINE_AA)
         return projected_image
-
 
     def projectLandmarksToImage_removeoverlap(self, position, orientation,
                                               landmark_points, landmark_classes,
@@ -670,7 +669,6 @@ class Compare2DMapAndImage:
         self.vlm_img_input[0] = projected_image
         return projected_image
 
-
     def save_img(self, img, projected_image):
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
@@ -680,7 +678,6 @@ class Compare2DMapAndImage:
 
         _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), projected_image)
-
 
     def save_json(self, json_out, output_dir):
         json_path = json_out["image_idx"][:-4] + ".json"
@@ -715,7 +712,6 @@ class Compare2DMapAndImage:
         combined_image = np.hstack((img1, img2))
         return combined_image
 
-
     def get_class_index(self, class_name):
         # Returns the index of the specified class in the class list
         try:
@@ -729,18 +725,16 @@ class Compare2DMapAndImage:
             print(f"Class '{class_name}' not found in class list.")
             return [-1]  # Returns -1 if the class is not found
 
-
     def call_api_with_img(self, vlm_filter, vlm_img_input, txt_input):
-        vlm_response = vlm_filter.call_vision_agent_with_image_input(imgs=vlm_img_input, command=txt_input, client=self.client)
+        vlm_response = vlm_filter.call_vision_agent_with_image_input(imgs=vlm_img_input, command=txt_input,
+                                                                     client=self.client)
         str_response = return_str(vlm_response)
         return str_response
-
 
     def call_api(self, vlm_filter, txt_input):
         vlm_response = vlm_filter.call_vision_agent(txt_input, self.client)
         str_response = return_str(vlm_response)
         return str_response
-
 
     def memory_injection(self, vlm_filter):
         user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
@@ -770,23 +764,41 @@ class Compare2DMapAndImage:
         #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
         #
 
-
     def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
         ## Extract the part of the string that represents the list
-        list_from_idx = str_response.split('=')[-1].strip()
+        parts = str_response.split('incorrect_tags')[-1].strip()
+        parts = parts.split('[', 1)[-1]
 
         try:
-            list_from_idx = literal_eval(list_from_idx)
+            part = parts.split(']')[0]
+            incorrect_tags = '[' + part + ']'
+            incorrect_tags = literal_eval(incorrect_tags)
         except:
-            print(f"\nerror during extract the result list..{list_from_idx}\n")
-            list_from_idx = []  # prevent the program from stopping
+            incorrect_tags = []
+
+        try:
+            parts = parts.split('corrected_tags')[-1].split('[', 1)[-1]
+            part = parts.split(']')[0]
+            corrected_tags = '[' + part + ']'
+            corrected_tags = literal_eval(corrected_tags)
+        except:
+            corrected_tags = []
+
+        try:
+            parts = parts.split('duplicated_tags')[-1].split('[', 1)[-1]
+            part = parts.split(']')[0]
+            duplicated_tags = '[' + part + ']'
+            duplicated_tags = literal_eval(duplicated_tags)
+        except:
+            duplicated_tags = []
+
+        tag_idx_to_remove = incorrect_tags + duplicated_tags
 
         # replace a cls id to a cls name
-        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
-                            list_from_idx]
+        tags_to_remove = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+                          tag_idx_to_remove]
 
-        return list_from_string, list_from_idx
-
+        return tags_to_remove, tag_idx_to_remove, (incorrect_tags, corrected_tags)
 
     def return_descriptive_tags(self, str_response, cls_names, cls_idc, cls_keys, cls_locations) -> None:
         cls_matched_descriptive_tags = []
@@ -814,23 +826,24 @@ class Compare2DMapAndImage:
                 print(f"\nerror during extract the result list..{part}\n")
 
         if len(cls_matched_descriptive_tags) < 1:
-            return True
+            return []
 
-        #save json file
+        # save json file
         data = self.open_json(self.descriptive_tag_json)
 
         for general_tag, descriptive_tags, general_tag_key, location in zip(cls_matched_descriptive_tags,
-                                          cls_idx_matched_descriptive_tags, cls_key_matched_descriptive_tags, cls_key_matched_locations):
+                                                                            cls_idx_matched_descriptive_tags,
+                                                                            cls_key_matched_descriptive_tags,
+                                                                            cls_key_matched_locations):
 
-            info = { int(general_tag_key) : {"features": descriptive_tags, "location": location}}
+            info = {int(general_tag_key): {"features": descriptive_tags, "location": location}}
             if general_tag not in data:
                 data[general_tag] = {}
             if f'{descriptive_tags[0]}' not in data[general_tag]:
                 data[general_tag][f'{descriptive_tags[0]}'] = info
 
         self.save_json_from_path(self.descriptive_tag_json, data)
-
-
+        return tag_list
 
     ## TODO: finalize this function
     def return_landmarks_to_modify(self, str_response, vlm_cls_input, vlm_cls_input_idx):
@@ -854,8 +867,10 @@ class Compare2DMapAndImage:
 
         return modify_dic
 
+    def save_response_json(self, frame_num, output_dir, json_name,
+                           filter_prompts, filter_txt_input, filter_str_response, filtered_tags,
+                           tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
 
-    def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir, json_name):
         ##save it to json file
         # json_path = output_dir / "results.json"
         json_path = output_dir / json_name
@@ -864,25 +879,39 @@ class Compare2DMapAndImage:
             data = json.load(f)
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
-            data = {"prompts": prompts.split('\n'), "{:05d}.png".format(frame_num): {}}
+            data = {"filter_prompts": filter_prompts.split('\n'),
+                    "tag_generator_prompts": tg_prompts.split('\n'),
+                    "{:05d}.png".format(frame_num): {}
+                    }
 
-        if "prompts" not in data:
+        # todo : remove this part? no need to write again
+        if "filter_prompts" not in data:
             new_data = {}
-            new_data["prompts"] = prompts.split('\n')
-            for key in data.keys():
+            new_data["filter_prompts"] = filter_prompts.split('\n')
+            new_data["tag_generator_prompts"] = tg_prompts.split('\n')
+            for key in data:
                 new_data[key] = data[key]
             data = new_data
 
         if "{:05d}.png".format(frame_num) not in data:
             data["{:05d}.png".format(frame_num)] = {}
 
-        str_response = str_response.split('\n')
-        json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
-        data["{:05d}.png".format(frame_num)]["vlm_filter"] = json_out
+        if type(filtered_tags).__name__ == "list":
+            json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
+                        "filtered_out": filtered_tags}
+        else:
+             items_to_remove1, incorrect_tags, corrected_tags = filtered_tags
+             json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
+                         "filtered_out": items_to_remove1,
+                         "incorrect_tag_idx": incorrect_tags, "corrected_tags": corrected_tags}
+
+        data["{:05d}.png".format(frame_num)]["llm_filter"] = json_out
+        json_out = {"tg_text_input": tg_txt_input, "tg_response": tg_str_response.split('\n'),
+                    "generated_tag": descriptive_tags}
+        data["{:05d}.png".format(frame_num)]["llm_tagger"] = json_out
 
         with open(json_path, "w") as f:
             json.dump(data, f, indent=4)
-
 
     def get_model_output(self):
         if self.frame_num < 1:
@@ -902,37 +931,36 @@ class Compare2DMapAndImage:
 
         print("frame : ", frame_num)
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
-        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
-
-        ##edit a text input
-        txt_input = []
-        tag_num = []
-        for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
-            txt_input.append(f"{cls_num}: {cls_name}")
-            tag_num.append(cls_num)
-        txt_input = ", ".join(txt_input)
 
         vlm_img_input = vlm_img_input[0]
-        print(f"{txt_input}")
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input) # save an input img
+        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
-        # save an input img
-        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        #### filtering api
+        # edit a text input
+        filter_txt_input = []
+        tag_num = []
+        for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
+            filter_txt_input.append(f"{cls_num}: {cls_name}")
+            tag_num.append(cls_num)
+        filter_txt_input = ", ".join(filter_txt_input)
+
+
+        print(f"{filter_txt_input}")
 
         # call api for filtering
         self.tag_filter_api.reset_memory()  # remove memorise
         # self.memory_injection(self.tag_filter_api) # Add examples of the response I want
 
-        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, txt_input)
-        items_to_remove1, idx_to_remove1 = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
+        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                            vlm_cls_input_idx)
-        # str_response1 =[]
-        # items_to_remove1=[]
-        # idx_to_remove1=[]
-
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
 
-        #if the tag is already descriptive
+
+        #### descriptive tag api
+        # if the tag is already descriptive
         no_need_description = []
         for idx, cls_name in enumerate(vlm_cls_input):
             for parent_key, tags in exist_descriptive_tags.items():
@@ -943,66 +971,70 @@ class Compare2DMapAndImage:
                         exist_descriptive_tags[parent_key][cls_name][vlm_cls_key[idx]] = {}
                         print("add only key", vlm_cls_input[idx], vlm_cls_key[idx])
 
-        # if
-        txt_input = []
+        tg_txt_input = []
         tag_num = []
         for idx, (cls_name, cls_num) in enumerate(zip(vlm_cls_input, vlm_cls_input_idx)):
             if cls_num in idx_to_remove1 or idx in no_need_description:
                 continue
-            txt_input.append(f"tag {cls_num}-{cls_name}")
+            tg_txt_input.append(f"tag {cls_num}-{cls_name}")
             tag_num.append(cls_num)
-        txt_input = ", ".join(txt_input)
-        txt_input = f"Identify the features of only tags : {txt_input}"
+        tg_txt_input = ", ".join(tg_txt_input)
+        tg_txt_input = f"Identify the features of only tags : {tg_txt_input}"
 
         if len(tag_num) < 1:
             print("No landmarks to create a descriptive tags")
         else:
-            print(f"Descriptor : {txt_input}")
-            self.tag_generator_api.reset_memory()
-            tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, txt_input)
-#         tag_api_response = """#### Object [0]:
-# 1. **Color**: Blue and white
-# 2. **Shape**: Shoe shape
-# 3. **Distinguishing Features**: Blue upper part with white sole, laces
-#
-# #### Object [1]:
-# 1. **Color**: Black
-# 2. **Shape**: Shoe shape
-# 3. **Distinguishing Features**: Entirely black, slip-on style
-#
-# ### Step 2: Create Descriptive Tags
-#
-# #### Object [0]:
-# tag_0 = ['blue and white shoe', 'shoe shape', 'blue upper part with white sole and laces']
-#
-# #### Object [1]:
-# tag_1 = ['black shoe', 'shoe shape', 'entirely black, slip-on style']"""
-            self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
-                                                          vlm_cls_key, vlm_cls_location)
+            #print(f"Descriptor : {tg_txt_input}")
+            # self.tag_generator_api.reset_memory()
+            # tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, tg_txt_input)
 
+            # tag_api_response = """#### Object [0]:
+            # 1. **Color**: Blue and white
+            # 2. **Shape**: Shoe shape
+            # 3. **Distinguishing Features**: Blue upper part with white sole, laces
+            #
+            # #### Object [1]:
+            # 1. **Color**: Black
+            # 2. **Shape**: Shoe shape
+            # 3. **Distinguishing Features**: Entirely black, slip-on style
+            #
+            # ### Step 2: Create Descriptive Tags
+            #
+            # #### Object [0]:
+            # tag_0 = ['blue and white shoe', 'shoe shape', 'blue upper part with white sole and laces']
+            #
+            # #### Object [1]:
+            # tag_1 = ['black shoe', 'shoe shape', 'entirely black, slip-on style']"""
 
+            # generated_tags = self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
+            #                                               vlm_cls_key, vlm_cls_location)
+
+            tag_api_response, generated_tags = "", []
+
+        #### save all results
         # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
         self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
                               idx_to_remove1]
 
-        self.save_response_json(self.tag_filter_api.args.system_prompt, txt_input, str_response1, frame_num,
-                                items_to_remove1, self.output_dir, "results1.json")
+        self.save_response_json(frame_num, self.output_dir, "results1.json",
+                                self.tag_filter_api.args.system_prompt, filter_txt_input,
+                                str_response1, (items_to_remove1, incorrect_tags, corrected_tags),
+                                self.tag_generator_api.args.system_prompt, tg_txt_input,
+                                tag_api_response, generated_tags
+                                )
 
         print("remove: ", items_to_remove1)
 
-
         if MODIFY_FUNCTION:
             ## TODO: modify landmark class
-            modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input,vlm_cls_input_idx)
+            modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input, vlm_cls_input_idx)
             print("modify_dic : ", modify_dic)
             self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
             print("landmark_keys_to_modify : ", self.landmark_keys_to_modify)
-            self.newclasses_for_landmarks = list(modify_dic.values()) ## need to double check this
+            self.newclasses_for_landmarks = list(modify_dic.values())  ## need to double check this
             print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
 
-
         return True
-
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
@@ -1017,7 +1049,6 @@ class Compare2DMapAndImage:
         except rospy.ServiceException as e:
             rospy.logerr("Service call failed: %s" % e)
             return False
-
 
     def call_remove_landmark_service(self, landmark_key):
         rospy.wait_for_service('remove_landmark')
