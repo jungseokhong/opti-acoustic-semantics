@@ -15,26 +15,25 @@ class vision_filter(PrefixProto):
    Step 1. Verify that each tag matches the object in its bounding box.
        example 1:
        Tag 1 (bag): Correct.
-       Tag 4 (apple): Incorrect. 
+       Tag 4 (apple): Incorrect. It contains <object name>
+       Tag 5 (apple): Correct 
        Tag 6 (soccer ball): Correct
-       Tag 7 (ball): Correct  
+       Tag 7 (ball): Correct
+       Tag 11 (chair): Incorrect. It contains <object name>  
        
-   Step 2. Determine if there are multiple tags pointing to the same object and return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
+   Step 2. Determine if there are multiple tags pointing to the same object among the tags identified as correct in Step 1. Return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
        example 1:
-       Tags[6, 7] : ball, soccer ball are pointing to the same object.
+       Tags[6, 7] : ball, soccer ball are visually pointing to the same object, which is the red ball under the desk
    
-   Step 3. If there are multiple tags for one object from the response of Step 2, visually identify which tag most accurately covers the entire object. Rank the tags and explain your reasoning.
+   Step 3. If there are multiple tags for one object from the response of Step 2, identify which tag is the most accurate. Choose one most precise tag. 
        example 1:
-       Tag [6]: soccer ball  is more precise. So, precise_tag = [7]
+       Tag [6]: object name "soccer ball" is more precise. So, precise_tag = [7]
 
-   Step 4. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = []. Return unmatched_tags = [] if No unmatched tags.
+   Step 4. Provide a summary of the results from Steps 1 and 3 in the following format : <incorrect | corrected | duplicated>_tags = []. Return <incorrect | corrected | duplicated>_tags = [] if No tag.
        example 1:
-       unmatched_tags = [4]
-       unmatched_tags = [6] 
-
-   Step 5. Extract only the list from the Step 4.   
-       example 1:
-       unmatched_tags = [4, 6]
+       incorrect_tags = [4, 11] 
+       corrected_tags = ['<object name>', '<object name>']
+       duplicated_tags = [6] 
    """
 
 #     system_prompt = """
