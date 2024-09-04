@@ -28,6 +28,8 @@ from ast import literal_eval
 
 from vlm_filter_utils import vision_filter
 
+from collections import defaultdict
+
 import sys
 
 sys.path.append(os.environ['LLM_MAPPING'])
@@ -49,9 +51,7 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
-
 MODIFY_FUNCTION = False
-
 
 class Compare2DMapAndImage:
     def __init__(self):
@@ -118,6 +118,10 @@ class Compare2DMapAndImage:
         self.descriptive_tag_json = self.descriptive_tag_json / "descriptive_tags.json"
         self.delete_file(self.descriptive_tag_json)
 
+        # Initialize confusion matrix as a defaultdict of dicts
+        self.confusion_matrix = defaultdict(lambda: defaultdict(int))
+        self.probabilities = defaultdict(dict)
+
     def delete_file(self, path):
         if path.exists():
             path.unlink(missing_ok=True)
@@ -169,8 +173,8 @@ class Compare2DMapAndImage:
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
-        combined_image = self.combine_images(yoloimg_cv, projected_image)
-        # combined_image = projected_image
+        # combined_image = self.combine_images(yoloimg_cv, projected_image)
+        combined_image = projected_image
         self.classstring = objects_info.classlist.data
 
         # Convert the combined OpenCV image back to ROS Image
@@ -868,6 +872,30 @@ class Compare2DMapAndImage:
 
         return modify_dic
 
+    def update_confusion_matrix(self, predicted_class, corrected_class):
+        """
+        Update the confusion matrix with the predicted and corrected class.
+
+        Args:
+            predicted_class (str): The class predicted by the object detector.
+            corrected_class (str): The class corrected by the VLM.
+        """
+        # Increment the count for the corrected class under the predicted class
+        self.confusion_matrix[predicted_class][corrected_class] += 1
+
+    def calculate_probabilities(self):
+        """
+        Calculate and print the probability of each predicted class being corrected to each other class.
+        """
+        # probabilities = defaultdict(dict)
+        for predicted_class, corrections in self.confusion_matrix.items():
+            total_predictions = sum(corrections.values())
+            for corrected_class, count in corrections.items():
+                self.probabilities[predicted_class][corrected_class] = count / total_predictions
+
+        return True #self.probabilities
+
+
     def save_response_json(self, frame_num, output_dir, json_name,
                            filter_prompts, filter_txt_input, filter_str_response, filtered_tags,
                            tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
@@ -955,12 +983,9 @@ class Compare2DMapAndImage:
         str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
         items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                            vlm_cls_input_idx)
-        # str_response1 = ""
-        # items_to_remove1, idx_to_remove1 = [], []
-        # incorrect_tags, corrected_tags = [], []
-
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
+
 
         #### descriptive tag api
         # if the tag is already descriptive or descriptive tag is already exists
