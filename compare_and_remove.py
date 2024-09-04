@@ -49,7 +49,9 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
+
 MODIFY_FUNCTION = False
+
 
 class Compare2DMapAndImage:
     def __init__(self):
@@ -900,10 +902,10 @@ class Compare2DMapAndImage:
             json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
                         "filtered_out": filtered_tags}
         else:
-             items_to_remove1, incorrect_tags, corrected_tags = filtered_tags
-             json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
-                         "filtered_out": items_to_remove1,
-                         "incorrect_tag_idx": incorrect_tags, "corrected_tags": corrected_tags}
+            items_to_remove1, incorrect_tags, corrected_tags = filtered_tags
+            json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
+                        "filtered_out": items_to_remove1,
+                        "incorrect_tag_idx": incorrect_tags, "corrected_tags": corrected_tags}
 
         data["{:05d}.png".format(frame_num)]["llm_filter"] = json_out
         json_out = {"tg_text_input": tg_txt_input, "tg_response": tg_str_response.split('\n'),
@@ -933,7 +935,7 @@ class Compare2DMapAndImage:
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
 
         vlm_img_input = vlm_img_input[0]
-        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input) # save an input img
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)  # save an input img
         self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
         #### filtering api
@@ -944,7 +946,6 @@ class Compare2DMapAndImage:
             filter_txt_input.append(f"{cls_num}: {cls_name}")
             tag_num.append(cls_num)
         filter_txt_input = ", ".join(filter_txt_input)
-
 
         print(f"{filter_txt_input}")
 
@@ -962,21 +963,28 @@ class Compare2DMapAndImage:
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
 
-
         #### descriptive tag api
         # if the tag is already descriptive or descriptive tag is already exists
         # [list(dic_tag[par_key][sub_key].keys()) for par_key in dic_tag.keys() for sub_key in dic_tag[par_key].keys()]
         no_need_description = []
-        for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)): # landmark tags
+        all_keys = [ssub_key for par_key in exist_descriptive_tags.keys()
+                    for sub_key in exist_descriptive_tags[par_key].keys() for ssub_key in
+                    exist_descriptive_tags[par_key][sub_key].keys()]
+
+        all_dct_tags = [sub_key for par_key in exist_descriptive_tags.keys() for sub_key in
+                        exist_descriptive_tags[par_key].keys()]
+
+
+        for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)):  # landmark tags
             print("cls_name", cls_name)
-            for parent_key, tags in exist_descriptive_tags.items(): #general tags, values : descriptive tag - keys - locations
+            for parent_key, tags in exist_descriptive_tags.items():  # general tags, values : descriptive tag - keys - locations
                 if idx in no_need_description:
                     break
 
-                for child_key, child_tags in tags.items(): # existing key
-                     if cls_key in child_tags.keys():
-                         no_need_description.append(idx)
-                         break
+                for child_key, child_tags in tags.items():  # existing key
+                    if cls_key in child_tags.keys():
+                        no_need_description.append(idx)
+                        break
 
                 if cls_name in tags:  # already existed in descriptive tag list
                     no_need_description.append(idx)
@@ -985,7 +993,6 @@ class Compare2DMapAndImage:
                         exist_descriptive_tags[parent_key][cls_name][vlm_cls_key[idx]] = {}
                         print("add only key", vlm_cls_input[idx], vlm_cls_key[idx])
         self.save_json_from_path(self.descriptive_tag_json, exist_descriptive_tags)
-
 
         tg_txt_input = []
         tag_num = []
@@ -1052,44 +1059,47 @@ class Compare2DMapAndImage:
 
         return True
 
-    def call_remove_class_service(self, class_id):
-        rospy.wait_for_service('remove_class')
-        try:
-            out = []
-            for id in class_id:
-                remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
-                req = RemoveClassRequest(class_id=id)
-                res = remove_class(req)
-                out.append(res.success)
-            return -1 if False in out else 1  # res.success
-        except rospy.ServiceException as e:
-            rospy.logerr("Service call failed: %s" % e)
-            return False
 
-    def call_remove_landmark_service(self, landmark_key):
-        rospy.wait_for_service('remove_landmark')
-        try:
-            remove_landmark = rospy.ServiceProxy('remove_landmark', RemoveLandmark)
-            req = RemoveLandmarkRequest(landmark_key=landmark_key)
-            res = remove_landmark(req)
-            return res.success
-        except rospy.ServiceException as e:
-            rospy.logerr("Service call failed: %s" % e)
-            return False
+def call_remove_class_service(self, class_id):
+    rospy.wait_for_service('remove_class')
+    try:
+        out = []
+        for id in class_id:
+            remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
+            req = RemoveClassRequest(class_id=id)
+            res = remove_class(req)
+            out.append(res.success)
+        return -1 if False in out else 1  # res.success
+    except rospy.ServiceException as e:
+        rospy.logerr("Service call failed: %s" % e)
+        return False
 
-    ## TODO: Modifylandmark service implementation
-    # this need to change the lm_to_class, etc
-    def call_modify_landmark_service(self, landmark_key, landmark_class):
-        rospy.wait_for_service('modify_landmark')
-        try:
-            modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
-            print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
-            req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
-            res = modify_landmark(req)
-            return res.success
-        except rospy.ServiceException as e:
-            rospy.logerr("Service call failed: %s" % e)
-            return False
+
+def call_remove_landmark_service(self, landmark_key):
+    rospy.wait_for_service('remove_landmark')
+    try:
+        remove_landmark = rospy.ServiceProxy('remove_landmark', RemoveLandmark)
+        req = RemoveLandmarkRequest(landmark_key=landmark_key)
+        res = remove_landmark(req)
+        return res.success
+    except rospy.ServiceException as e:
+        rospy.logerr("Service call failed: %s" % e)
+        return False
+
+
+## TODO: Modifylandmark service implementation
+# this need to change the lm_to_class, etc
+def call_modify_landmark_service(self, landmark_key, landmark_class):
+    rospy.wait_for_service('modify_landmark')
+    try:
+        modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
+        print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
+        req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
+        res = modify_landmark(req)
+        return res.success
+    except rospy.ServiceException as e:
+        rospy.logerr("Service call failed: %s" % e)
+        return False
 
 
 if __name__ == "__main__":
