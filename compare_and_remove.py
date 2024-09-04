@@ -520,7 +520,7 @@ class Compare2DMapAndImage:
             del obj[idx]
 
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
-                        class_to_color, alpha=0.4, tag_box_size=25):
+                        class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
         tag_area = []  # To determine if tags  are overlapping
         for ((tlx, tly), (brx, bry)), color in zip(bounding_boxes, class_to_color.values()):
             # get tag_box positions
@@ -535,11 +535,22 @@ class Compare2DMapAndImage:
             cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, 1)  # tags
             self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
 
+
         # print text on the image
-        for single_obj, tag in zip(obj, tag_area):
+        for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
             tag_name = f"[{single_obj['i']}]"
             cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
                         (0, 0, 0), 1, cv2.LINE_AA)
+
+            if cropped_imgs:
+                pre_projected = self.vlm_img_input[idx+1].copy()
+                add_w = int(tag_box_size // 1.3)
+                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w , tag_box_size), class_to_color[idx], 1)
+                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], -1)
+                self.vlm_img_input[idx+1] = cv2.addWeighted(self.vlm_img_input[idx+1], alpha, pre_projected, 1 - alpha, 0, pre_projected)
+                cv2.putText(self.vlm_img_input[idx+1], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
+                            (0, 0, 0), 1, cv2.LINE_AA)
+
         return projected_image
 
     def projectLandmarksToImage_removeoverlap(self, position, orientation,
@@ -642,7 +653,7 @@ class Compare2DMapAndImage:
                     else self.img_height - 2
 
                 ##add cropped images
-                self.vlm_img_input.append(img[tly:bry, tlx:brx])
+                self.vlm_img_input.append(img[tly:bry, tlx:brx].copy())
 
                 bounding_boxes.append(((tlx, tly), (brx, bry)))
                 depths.append(Z)
@@ -655,7 +666,7 @@ class Compare2DMapAndImage:
 
         self.removeoverlap(bounding_boxes, depths, obj)
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
-                                               obj, class_to_color, alpha=0.4, tag_box_size=25)
+                                               obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -961,8 +972,16 @@ class Compare2DMapAndImage:
         print("frame : ", frame_num)
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
 
-        vlm_img_input = vlm_img_input[0]
-        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)  # save an input img
+        # for idx, img in enumerate(vlm_img_input[1:]):
+        #     cv2.imwrite(str(self.output_dir / "{:05d}_input_{:02d}.png".format(frame_num, idx)), img)
+
+        ### without cropped imgs
+        # vlm_img_input = vlm_img_input[0] # without cropped imgs
+        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        ### with cropped imgs
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input[0])  # save an input img
+        ###
+
         self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
         #### filtering api
@@ -978,8 +997,6 @@ class Compare2DMapAndImage:
 
         # call api for filtering
         self.tag_filter_api.reset_memory()  # remove memorise
-        self.memory_injection(self.tag_filter_api) # Add examples of the response I want
-
         str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
         items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                            vlm_cls_input_idx)
