@@ -13,13 +13,14 @@ import rospy
 import torch
 from cv_bridge import CvBridge
 import cv2
-from semanticslam_ros.msg import ObjectsVector, ObjectVector
+from semanticslam_ros.msg import ObjectsVector, ObjectVector, AllClassProbabilities, ClassProbabilities
 from semanticslam_ros.srv import UpdateClasslist, UpdateClasslistResponse, UpdateClasslistRequest
 from sensor_msgs.msg import CameraInfo, Image
 
 from PIL import Image as PILImage
 from sensor_msgs.msg import Image as RosImage
 import sys
+from collections import defaultdict
 
 np.set_printoptions(threshold=sys.maxsize)
 
@@ -123,6 +124,8 @@ class ClosedSetDetector:
         self.objs_pub = rospy.Publisher("/camera/objects", ObjectsVector, queue_size=10)
         self.img_pub = rospy.Publisher("/camera/yolo_img", RosImage, queue_size=10)
         self.br = CvBridge()
+        self.probabilities_dict = {}
+        self.probabilities = defaultdict(dict)
 
         # Set up synchronized subscriber 
         # REALSENSE PARAMS
@@ -143,16 +146,15 @@ class ClosedSetDetector:
         # JACKAL PARAMS
         cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/rgb/camera_info")
         rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/rgb/image_rect_color")
-        depth_topic = rospy.get_param(
-            "depth_topic", "/zed2i/zed_node/depth/depth_registered"
-        )
+        depth_topic = rospy.get_param("depth_topic", "/zed2i/zed_node/depth/depth_registered")
+        allclsprobs_topic = rospy.get_param("allclsprobs", "/allclass_probabilities")
+
         self.cam_info_sub = message_filters.Subscriber(
             cam_info_topic, CameraInfo, queue_size=1
         )
         self.rgb_img_sub = message_filters.Subscriber(rgb_topic, Image, queue_size=1)
-        self.depth_img_sub = message_filters.Subscriber(
-            depth_topic, Image, queue_size=1
-        )
+        self.depth_img_sub = message_filters.Subscriber(depth_topic, Image, queue_size=1)
+        self.allclsprobs_sub = rospy.Subscriber(allclsprobs_topic, AllClassProbabilities, self.probability_callback)
 
         # Synchronizer for RGB and depth images
         self.sync = message_filters.ApproximateTimeSynchronizer(
@@ -160,6 +162,13 @@ class ClosedSetDetector:
         )
 
         self.sync.registerCallback(self.forward_pass)
+
+    def probability_callback(self, allcls_probs: AllClassProbabilities):
+        for cls_probs in allcls_probs.classes:
+        # process incoming probability data and update local probabilities dictionary.
+        # self.probabilities_dict[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+            self.probabilities[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+
 
     def update_classes_from_list(self):
         """
@@ -170,7 +179,14 @@ class ClosedSetDetector:
 
         # Convert the list of class names into a dictionary with indices as keys
         self.classes = {i: class_name for i, class_name in enumerate(class_names)}
+
+        for predicted_class, corrections in self.probabilities.items():
+            for corrected_class, prob in corrections.items():
+                if corrected_class not in self.classes.values():
+                    self.classes[len(self.classes)] = corrected_class
+                    rospy.loginfo(f"Added class: {corrected_class}")
         rospy.loginfo(f"Classes updated: {self.classes}")
+
 
     def handle_update_classes(self, req):
         # Example handler, adjust according to your needs
@@ -254,6 +270,14 @@ class ClosedSetDetector:
 
             if len(classes) < 1:
                 return
+            # for cls_probs in allcls_probs.classes:
+            #     # process incoming probability data and update local probabilities dictionary.
+            #     # self.probabilities_dict[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+            #     self.probabilities[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+
+            for predicted_class, corrections in self.probabilities.items():
+                for corrected_class, prob in corrections.items():
+                    print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
             # visualization?
             im = PILImage.fromarray(visualization)

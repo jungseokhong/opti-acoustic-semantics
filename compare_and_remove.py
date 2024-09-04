@@ -15,7 +15,7 @@ import rospy
 from cv_bridge import CvBridge
 import cv2
 from openai import OpenAI
-from semanticslam_ros.msg import MapInfo, ObjectsVector
+from semanticslam_ros.msg import MapInfo, ObjectsVector, AllClassProbabilities, ClassProbabilities
 
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image as RosImage
@@ -94,6 +94,7 @@ class Compare2DMapAndImage:
         self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/rgb/camera_info', CameraInfo, self.camera_info_callback)
 
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
+        self.allclsprobs_pub = rospy.Publisher('/allclass_probabilities', AllClassProbabilities, queue_size=10)
 
         # Use a cache for the mapinfo_sub to store messages
         self.mapinfo_cache = message_filters.Cache(self.mapinfo_sub, 500)
@@ -186,6 +187,25 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
+
+        ## [TODO]: this may not be the perfect place to publish all class probabilities
+
+        allclass_probs = AllClassProbabilities()
+        allclass_probs.header = rgbimg.header
+        allclass_probs.classes = []
+
+        for predicted_class, corrections in self.probabilities.items():
+            classes_prob = ClassProbabilities()
+            classes_prob.predicted_class = predicted_class
+            classes_prob.corrected_classes = list(corrections.keys())
+            classes_prob.probabilities = list(corrections.values())
+            allclass_probs.classes.append(classes_prob)
+            # print(f'length of allclass_probs.classes: {len(allclass_probs.classes)}')
+
+        # Publish all class probabilities
+        self.allclsprobs_pub.publish(allclass_probs)
+        # rospy.loginfo(f"Publishing probabilities for all classes")
+
 
     def parse_data(self, map_info):
 
@@ -978,7 +998,7 @@ class Compare2DMapAndImage:
 
         # call api for filtering
         self.tag_filter_api.reset_memory()  # remove memorise
-        self.memory_injection(self.tag_filter_api) # Add examples of the response I want
+        # self.memory_injection(self.tag_filter_api) # Add examples of the response I want
 
         str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
         items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
@@ -986,6 +1006,26 @@ class Compare2DMapAndImage:
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
 
+        # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
+        # Creating the dictionary for vlm_cls_input
+        vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
+
+        for incorrect_tag, corrected_tag in zip(incorrect_tags, corrected_tags):
+            self.update_confusion_matrix(vlm_cls_input_dict.get(incorrect_tag), corrected_tag)
+            # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
+            # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
+        # Print the confusion matrix
+        print("Confusion Matrix:")
+        for predicted_class, corrections in self.confusion_matrix.items():
+            print(f"{predicted_class}: {dict(corrections)}")
+
+        # Calculate probabilities
+        # probabilities = self.calculate_probabilities()
+        self.calculate_probabilities()
+        print("\nProbabilities:")
+        for predicted_class, corrections in self.probabilities.items():
+            for corrected_class, prob in corrections.items():
+                print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
         #### descriptive tag api
         # if the tag is already descriptive or descriptive tag is already exists
