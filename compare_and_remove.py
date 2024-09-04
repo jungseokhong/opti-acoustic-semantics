@@ -766,35 +766,34 @@ class Compare2DMapAndImage:
         #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
         #
 
+    def extract_list(self, response, keyword):
+        rest_response = response.split(keyword)[-1].split('[', 1)[-1].strip()
+        part = rest_response.split(']')[0]
+        extracted_list = '[' + part + ']'
+        extracted_list = literal_eval(extracted_list)
+        return extracted_list, rest_response
+
     def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
         ## Extract the part of the string that represents the list
-        parts = str_response.split('incorrect_tags')[-1].strip()
-        parts = parts.split('[', 1)[-1]
 
         try:
-            part = parts.split(']')[0]
-            incorrect_tags = '[' + part + ']'
-            incorrect_tags = literal_eval(incorrect_tags)
+            empty_tags, str_response = self.extract_list(str_response, 'empty_tags')
+        except:
+            empty_tags = []
+        try:
+            incorrect_tags, str_response = self.extract_list(str_response, 'incorrect_tags')
         except:
             incorrect_tags = []
-
         try:
-            parts = parts.split('corrected_tags')[-1].split('[', 1)[-1]
-            part = parts.split(']')[0]
-            corrected_tags = '[' + part + ']'
-            corrected_tags = literal_eval(corrected_tags)
+            corrected_tags, str_response = self.extract_list(str_response, 'corrected_tags')
         except:
             corrected_tags = []
-
         try:
-            parts = parts.split('duplicated_tags')[-1].split('[', 1)[-1]
-            part = parts.split(']')[0]
-            duplicated_tags = '[' + part + ']'
-            duplicated_tags = literal_eval(duplicated_tags)
+            duplicated_tags, str_response = self.extract_list(str_response, 'duplicated_tags')
         except:
             duplicated_tags = []
 
-        tag_idx_to_remove = incorrect_tags + duplicated_tags
+        tag_idx_to_remove = empty_tags + incorrect_tags + duplicated_tags
 
         # replace a cls id to a cls name
         tags_to_remove = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
@@ -950,49 +949,45 @@ class Compare2DMapAndImage:
         print(f"{filter_txt_input}")
 
         # call api for filtering
-        # self.tag_filter_api.reset_memory()  # remove memorise
-        # self.memory_injection(self.tag_filter_api) # Add examples of the response I want
+        self.tag_filter_api.reset_memory()  # remove memorise
+        self.memory_injection(self.tag_filter_api) # Add examples of the response I want
 
-        # str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
-        # items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-        #                                                                    vlm_cls_input_idx)
-        str_response1 = ""
-        items_to_remove1, idx_to_remove1 = [], []
-        incorrect_tags, corrected_tags = [], []
+        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
+        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+                                                                           vlm_cls_input_idx)
+        # str_response1 = ""
+        # items_to_remove1, idx_to_remove1 = [], []
+        # incorrect_tags, corrected_tags = [], []
 
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
 
         #### descriptive tag api
         # if the tag is already descriptive or descriptive tag is already exists
-        # [list(dic_tag[par_key][sub_key].keys()) for par_key in dic_tag.keys() for sub_key in dic_tag[par_key].keys()]
         no_need_description = []
-        all_keys = [ssub_key for par_key in exist_descriptive_tags.keys()
+        # skip it if the key is existed
+        all_keys = [int(ssub_key) for par_key in exist_descriptive_tags.keys()
                     for sub_key in exist_descriptive_tags[par_key].keys() for ssub_key in
                     exist_descriptive_tags[par_key][sub_key].keys()]
 
-        all_dct_tags = [sub_key for par_key in exist_descriptive_tags.keys() for sub_key in
+        if len(all_keys) < 1:
+            no_need_description = []
+        else:
+            no_need_description = np.where(np.isin(vlm_cls_key, all_keys))[0]
+            # if the key is already existed in the descriptive tag list # might not need this part
+            # no_need_description = np.array([])
+
+            # if the tag is already descriptive
+            all_tags = [[sub_key, par_key] for par_key in exist_descriptive_tags.keys() for sub_key in
                         exist_descriptive_tags[par_key].keys()]
+            sub_tags = np.array(all_tags)[:, 0]
 
-
-        for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)):  # landmark tags
-            print("cls_name", cls_name)
-            for parent_key, tags in exist_descriptive_tags.items():  # general tags, values : descriptive tag - keys - locations
-                if idx in no_need_description:
-                    break
-
-                for child_key, child_tags in tags.items():  # existing key
-                    if cls_key in child_tags.keys():
-                        no_need_description.append(idx)
-                        break
-
-                if cls_name in tags:  # already existed in descriptive tag list
-                    no_need_description.append(idx)
-                    print("already in the desc tags", vlm_cls_input[idx], vlm_cls_key[idx])
-                    if vlm_cls_key[idx] not in exist_descriptive_tags[parent_key][cls_name].values():
-                        exist_descriptive_tags[parent_key][cls_name][vlm_cls_key[idx]] = {}
-                        print("add only key", vlm_cls_input[idx], vlm_cls_key[idx])
-        self.save_json_from_path(self.descriptive_tag_json, exist_descriptive_tags)
+            for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)):
+                if idx not in no_need_description and cls_name in sub_tags:
+                    no_need_description = np.append(no_need_description, idx)
+                    tag_idx = np.where(sub_tags == cls_name)[0]
+                    exist_descriptive_tags[all_tags[tag_idx[0]][1]][sub_tags[tag_idx[0]]][int(vlm_cls_key[idx])] = {}  #
+            self.save_json_from_path(self.descriptive_tag_json, exist_descriptive_tags)  # add new tags
 
         tg_txt_input = []
         tag_num = []
@@ -1005,7 +1000,9 @@ class Compare2DMapAndImage:
         tg_txt_input = f"Identify the features of only tags : {tg_txt_input}"
 
         if len(tag_num) < 1:
-            print("No landmarks to create a descriptive tags")
+            print("No landmarks to create a descriptive tag")
+            tag_api_response = "No new landmark to create a descriptive tag"
+            generated_tags = []
         else:
             print(f"Descriptor : {tg_txt_input}")
             self.tag_generator_api.reset_memory()
@@ -1060,46 +1057,46 @@ class Compare2DMapAndImage:
         return True
 
 
-def call_remove_class_service(self, class_id):
-    rospy.wait_for_service('remove_class')
-    try:
-        out = []
-        for id in class_id:
-            remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
-            req = RemoveClassRequest(class_id=id)
-            res = remove_class(req)
-            out.append(res.success)
-        return -1 if False in out else 1  # res.success
-    except rospy.ServiceException as e:
-        rospy.logerr("Service call failed: %s" % e)
-        return False
+    def call_remove_class_service(self, class_id):
+        rospy.wait_for_service('remove_class')
+        try:
+            out = []
+            for id in class_id:
+                remove_class = rospy.ServiceProxy('remove_class', RemoveClass)
+                req = RemoveClassRequest(class_id=id)
+                res = remove_class(req)
+                out.append(res.success)
+            return -1 if False in out else 1  # res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
 
 
-def call_remove_landmark_service(self, landmark_key):
-    rospy.wait_for_service('remove_landmark')
-    try:
-        remove_landmark = rospy.ServiceProxy('remove_landmark', RemoveLandmark)
-        req = RemoveLandmarkRequest(landmark_key=landmark_key)
-        res = remove_landmark(req)
-        return res.success
-    except rospy.ServiceException as e:
-        rospy.logerr("Service call failed: %s" % e)
-        return False
+    def call_remove_landmark_service(self, landmark_key):
+        rospy.wait_for_service('remove_landmark')
+        try:
+            remove_landmark = rospy.ServiceProxy('remove_landmark', RemoveLandmark)
+            req = RemoveLandmarkRequest(landmark_key=landmark_key)
+            res = remove_landmark(req)
+            return res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
 
 
-## TODO: Modifylandmark service implementation
-# this need to change the lm_to_class, etc
-def call_modify_landmark_service(self, landmark_key, landmark_class):
-    rospy.wait_for_service('modify_landmark')
-    try:
-        modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
-        print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
-        req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
-        res = modify_landmark(req)
-        return res.success
-    except rospy.ServiceException as e:
-        rospy.logerr("Service call failed: %s" % e)
-        return False
+    ## TODO: Modifylandmark service implementation
+    # this need to change the lm_to_class, etc
+    def call_modify_landmark_service(self, landmark_key, landmark_class):
+        rospy.wait_for_service('modify_landmark')
+        try:
+            modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
+            print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
+            req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
+            res = modify_landmark(req)
+            return res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
 
 
 if __name__ == "__main__":
