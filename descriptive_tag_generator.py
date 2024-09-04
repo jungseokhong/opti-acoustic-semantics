@@ -8,7 +8,7 @@ class tag_generator(PrefixProto):
     temperature = 1.0
     max_tokens = 50
     system_prompt = """
-Step 1: AIdentify the features of the object inside the bounding box for each tag number.
+Step 1: AIdentify the features of the object inside the bounding box for each tag number. Use the cropped images for reference.
  1. Color: What is the primary color of the <object>?
  2. Shape: What shape or structural features does the <object> have?
  3. Distinguishing Features: What features most effectively distinguish this <object> from similar objects?

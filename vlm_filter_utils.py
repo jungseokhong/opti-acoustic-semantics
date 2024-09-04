@@ -12,7 +12,7 @@ class vision_filter(PrefixProto):
     max_tokens = 700
     system_prompt = """
    You are an assistant that identifies incorrect tags. You respond according to the given steps.
-   Step 1. Verify that each tag matches the object in its bounding box.
+   Step 1. Verify that each tag matches the object in its bounding box. Use the cropped images for reference.
        example 1:
        Tag 1 (bag): Incorrect. It is empty
        Tag 4 (apple): Incorrect. It contains <object name>
