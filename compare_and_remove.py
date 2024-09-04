@@ -15,7 +15,7 @@ import rospy
 from cv_bridge import CvBridge
 import cv2
 from openai import OpenAI
-from semanticslam_ros.msg import MapInfo, ObjectsVector
+from semanticslam_ros.msg import MapInfo, ObjectsVector, AllClassProbabilities, ClassProbabilities
 
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image as RosImage
@@ -94,6 +94,7 @@ class Compare2DMapAndImage:
         self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/rgb/camera_info', CameraInfo, self.camera_info_callback)
 
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
+        self.allclsprobs_pub = rospy.Publisher('/allclass_probabilities', AllClassProbabilities, queue_size=10)
 
         # Use a cache for the mapinfo_sub to store messages
         self.mapinfo_cache = message_filters.Cache(self.mapinfo_sub, 500)
@@ -186,6 +187,24 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
+
+        ## [TODO]: this may not be the perfect place to publish all class probabilities
+
+        allclass_probs = AllClassProbabilities()
+        allclass_probs.header = rgbimg.header
+        allclass_probs.classes = []
+
+        for predicted_class, corrections in self.probabilities.items():
+            classes_prob = ClassProbabilities()
+            classes_prob.predicted_class = predicted_class
+            classes_prob.corrected_classes = list(corrections.keys())
+            classes_prob.probabilities = list(corrections.values())
+            allclass_probs.classes.append(classes_prob)
+            # print(f'length of allclass_probs.classes: {len(allclass_probs.classes)}')
+
+        # Publish all class probabilities
+        self.allclsprobs_pub.publish(allclass_probs)
+        # rospy.loginfo(f"Publishing probabilities for all classes")
 
     def parse_data(self, map_info):
 
