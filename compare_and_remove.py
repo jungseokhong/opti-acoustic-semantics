@@ -54,9 +54,9 @@ MODIFY_FUNCTION = False
 class Compare2DMapAndImage:
     def __init__(self):
 
-        self.save_projections = False
-        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_mocap_2"
-        self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
+        self.save_projections = True
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
+        # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -949,27 +949,43 @@ class Compare2DMapAndImage:
         print(f"{filter_txt_input}")
 
         # call api for filtering
-        self.tag_filter_api.reset_memory()  # remove memorise
+        # self.tag_filter_api.reset_memory()  # remove memorise
         # self.memory_injection(self.tag_filter_api) # Add examples of the response I want
 
-        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
-        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                           vlm_cls_input_idx)
+        # str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
+        # items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+        #                                                                    vlm_cls_input_idx)
+        str_response1 = ""
+        items_to_remove1, idx_to_remove1 = [], []
+        incorrect_tags, corrected_tags = [], []
+
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
 
 
         #### descriptive tag api
-        # if the tag is already descriptive
+        # if the tag is already descriptive or descriptive tag is already exists
+        # [list(dic_tag[par_key][sub_key].keys()) for par_key in dic_tag.keys() for sub_key in dic_tag[par_key].keys()]
         no_need_description = []
-        for idx, cls_name in enumerate(vlm_cls_input):
-            for parent_key, tags in exist_descriptive_tags.items():
-                if cls_name in tags:  # already existed in descriptive tags
+        for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)): # landmark tags
+            print("cls_name", cls_name)
+            for parent_key, tags in exist_descriptive_tags.items(): #general tags, values : descriptive tag - keys - locations
+                if idx in no_need_description:
+                    break
+
+                for child_key, child_tags in tags.items(): # existing key
+                     if cls_key in child_tags.keys():
+                         no_need_description.append(idx)
+                         break
+
+                if cls_name in tags:  # already existed in descriptive tag list
                     no_need_description.append(idx)
                     print("already in the desc tags", vlm_cls_input[idx], vlm_cls_key[idx])
                     if vlm_cls_key[idx] not in exist_descriptive_tags[parent_key][cls_name].values():
                         exist_descriptive_tags[parent_key][cls_name][vlm_cls_key[idx]] = {}
                         print("add only key", vlm_cls_input[idx], vlm_cls_key[idx])
+        self.save_json_from_path(self.descriptive_tag_json, exist_descriptive_tags)
+
 
         tg_txt_input = []
         tag_num = []
@@ -984,9 +1000,9 @@ class Compare2DMapAndImage:
         if len(tag_num) < 1:
             print("No landmarks to create a descriptive tags")
         else:
-            #print(f"Descriptor : {tg_txt_input}")
-            # self.tag_generator_api.reset_memory()
-            # tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, tg_txt_input)
+            print(f"Descriptor : {tg_txt_input}")
+            self.tag_generator_api.reset_memory()
+            tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, tg_txt_input)
 
             # tag_api_response = """#### Object [0]:
             # 1. **Color**: Blue and white
@@ -1006,10 +1022,10 @@ class Compare2DMapAndImage:
             # #### Object [1]:
             # tag_1 = ['black shoe', 'shoe shape', 'entirely black, slip-on style']"""
 
-            # generated_tags = self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
-            #                                               vlm_cls_key, vlm_cls_location)
+            generated_tags = self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
+                                                          vlm_cls_key, vlm_cls_location)
 
-            tag_api_response, generated_tags = "", []
+            # tag_api_response, generated_tags = "", []
 
         #### save all results
         # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
