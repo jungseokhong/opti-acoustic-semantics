@@ -23,6 +23,7 @@ from scipy.spatial.transform import Rotation as R
 from semanticslam_ros.srv import RemoveClass, RemoveClassRequest
 from semanticslam_ros.srv import RemoveLandmark, RemoveLandmarkRequest
 from semanticslam_ros.srv import ModifyLandmark, ModifyLandmarkRequest
+import asyncio
 
 from ast import literal_eval
 
@@ -927,9 +928,8 @@ class Compare2DMapAndImage:
         return True #self.probabilities
 
 
-    def save_response_json(self, frame_num, output_dir, json_name,
-                           filter_prompts, filter_txt_input, filter_str_response, filtered_tags,
-                           tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
+    def save_filter_response_json(self, frame_num, output_dir, json_name,
+                           filter_prompts, filter_txt_input, filter_str_response, filtered_tags):
 
         ##save it to json file
         # json_path = output_dir / "results.json"
@@ -940,7 +940,6 @@ class Compare2DMapAndImage:
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
             data = {"filter_prompts": filter_prompts.split('\n'),
-                    "tag_generator_prompts": tg_prompts.split('\n'),
                     "{:05d}.png".format(frame_num): {}
                     }
 
@@ -948,7 +947,6 @@ class Compare2DMapAndImage:
         if "filter_prompts" not in data:
             new_data = {}
             new_data["filter_prompts"] = filter_prompts.split('\n')
-            new_data["tag_generator_prompts"] = tg_prompts.split('\n')
             for key in data:
                 new_data[key] = data[key]
             data = new_data
@@ -966,6 +964,36 @@ class Compare2DMapAndImage:
                         "incorrect_tag_idx": incorrect_tags, "corrected_tags": corrected_tags}
 
         data["{:05d}.png".format(frame_num)]["llm_filter"] = json_out
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+    def save_descriptor_response_json(self, frame_num, output_dir, json_name,
+                           tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
+
+        ##save it to json file
+        # json_path = output_dir / "results.json"
+        json_path = output_dir / json_name
+        if json_path.exists():
+            f = open(json_path)
+            data = json.load(f)
+        else:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            data = {"tag_generator_prompts": tg_prompts.split('\n'),
+                    "{:05d}.png".format(frame_num): {}
+                    }
+
+        # todo : remove this part? no need to write again
+        if "tg_prompts" not in data:
+            new_data = {}
+            new_data["tag_generator_prompts"] = tg_prompts.split('\n')
+            for key in data:
+                new_data[key] = data[key]
+            data = new_data
+
+        if "{:05d}.png".format(frame_num) not in data:
+            data["{:05d}.png".format(frame_num)] = {}
+
         json_out = {"tg_text_input": tg_txt_input, "tg_response": tg_str_response.split('\n'),
                     "generated_tag": descriptive_tags}
         data["{:05d}.png".format(frame_num)]["llm_tagger"] = json_out
@@ -973,80 +1001,14 @@ class Compare2DMapAndImage:
         with open(json_path, "w") as f:
             json.dump(data, f, indent=4)
 
-    def get_model_output(self):
-        if self.frame_num < 1:
-            return True
+    async def tag_generator(self, frame_num, vlm_img_input,
+                            vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+                            idx_to_remove1):
 
-        if len(self.vlm_cls_input) < 1:
-            print("no landmark")
-            return True
-
-        # copy necessary vars
-        frame_num = self.frame_num
-        vlm_cls_input_idx = self.vlm_cls_input_idx
-        vlm_cls_input = self.vlm_cls_input
-        vlm_cls_key = self.vlm_cls_key
-        vlm_img_input = self.vlm_img_input.copy()
-        vlm_cls_location = self.vlm_cls_location
-
-        print("frame : ", frame_num)
-        print("tags :", vlm_cls_input, vlm_cls_input_idx)
-
-        # for idx, img in enumerate(vlm_img_input[1:]):
-        #     cv2.imwrite(str(self.output_dir / "{:05d}_input_{:02d}.png".format(frame_num, idx)), img)
-
-        ### without cropped imgs
-        # vlm_img_input = vlm_img_input[0] # without cropped imgs
-        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
-        ### with cropped imgs
-        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input[0])  # save an input img
-        ###
-
-        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
-
-        #### filtering api
-        # edit a text input
-        filter_txt_input = []
-        tag_num = []
-        for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
-            filter_txt_input.append(f"{cls_num}: {cls_name}")
-            tag_num.append(cls_num)
-        filter_txt_input = ", ".join(filter_txt_input)
-
-        print(f"{filter_txt_input}")
-
-        # call api for filtering
-        self.tag_filter_api.reset_memory()  # remove memorise
-        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
-        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                           vlm_cls_input_idx)
         ## generate descriptive tags
         exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
-
-        # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
-        # Creating the dictionary for vlm_cls_input
-        vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
-
-        for incorrect_tag, corrected_tag in zip(incorrect_tags, corrected_tags):
-            self.update_confusion_matrix(vlm_cls_input_dict.get(incorrect_tag), corrected_tag)
-            # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
-            # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
-        # Print the confusion matrix
-        print("Confusion Matrix:")
-        for predicted_class, corrections in self.confusion_matrix.items():
-            print(f"{predicted_class}: {dict(corrections)}")
-
-        # Calculate probabilities
-        # probabilities = self.calculate_probabilities()
-        self.calculate_probabilities()
-        print("\nProbabilities:")
-        for predicted_class, corrections in self.probabilities.items():
-            for corrected_class, prob in corrections.items():
-                print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
-
-        #### descriptive tag api
-        # if the tag is already descriptive or descriptive tag is already exists
         no_need_description = []
+
         # skip it if the key is existed
         all_keys = [int(ssub_key) for par_key in exist_descriptive_tags.keys()
                     for sub_key in exist_descriptive_tags[par_key].keys() for ssub_key in
@@ -1086,44 +1048,100 @@ class Compare2DMapAndImage:
             tag_api_response = "No new landmark to create a descriptive tag"
             generated_tags = []
         else:
-            print(f"Descriptor : {tg_txt_input}")
+            print(f"frame_num :{frame_num}, Descriptor : {tg_txt_input}")
             self.tag_generator_api.reset_memory()
             tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, tg_txt_input)
-
-            # tag_api_response = """#### Object [0]:
-            # 1. **Color**: Blue and white
-            # 2. **Shape**: Shoe shape
-            # 3. **Distinguishing Features**: Blue upper part with white sole, laces
-            #
-            # #### Object [1]:
-            # 1. **Color**: Black
-            # 2. **Shape**: Shoe shape
-            # 3. **Distinguishing Features**: Entirely black, slip-on style
-            #
-            # ### Step 2: Create Descriptive Tags
-            #
-            # #### Object [0]:
-            # tag_0 = ['blue and white shoe', 'shoe shape', 'blue upper part with white sole and laces']
-            #
-            # #### Object [1]:
-            # tag_1 = ['black shoe', 'shoe shape', 'entirely black, slip-on style']"""
-
             generated_tags = self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
                                                           vlm_cls_key, vlm_cls_location)
 
-            # tag_api_response, generated_tags = "", []
+        self.save_descriptor_response_json(frame_num, self.output_dir, "results1.json",
+                            self.tag_generator_api.args.system_prompt, tg_txt_input, tag_api_response, generated_tags)
+
+
+
+    def get_model_output(self):
+        if self.frame_num < 1:
+            return True
+
+        if len(self.vlm_cls_input) < 1:
+            print("no landmark")
+            return True
+
+        # copy necessary vars
+        frame_num = self.frame_num
+        vlm_cls_input_idx = self.vlm_cls_input_idx
+        vlm_cls_input = self.vlm_cls_input
+        vlm_cls_key = self.vlm_cls_key
+        vlm_img_input = self.vlm_img_input.copy()
+        vlm_cls_location = self.vlm_cls_location
+
+        print("frame : ", frame_num)
+        print("tags :", vlm_cls_input, vlm_cls_input_idx)
+
+        # for idx, img in enumerate(vlm_img_input[1:]):
+        #     cv2.imwrite(str(self.output_dir / "{:05d}_input_{:02d}.png".format(frame_num, idx)), img)
+
+        ### without cropped imgs
+        # vlm_img_input = vlm_img_input[0] # without cropped imgs
+        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        ### with cropped imgs
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input[0])  # save an input img
+        ###
+
+        self.vlm_cls_input = []  # reset it, in order to prevent calling vlm repeatedly with the same input
+
+        #### filtering api
+        # edit a text input
+        filter_txt_input = []
+        tag_num = []
+        for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
+            filter_txt_input.append(f"{cls_num}: {cls_name}")
+            tag_num.append(cls_num)
+        filter_txt_input = ", ".join(filter_txt_input)
+
+        print(f"{filter_txt_input}")
+
+        # call api for filtering
+        self.tag_filter_api.reset_memory()  # remove memorise
+        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
+        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+                                                                           vlm_cls_input_idx)
+        # call api to generating descriptive tags
+        asyncio.run(self.tag_generator(frame_num, vlm_img_input,
+                                       vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+                                       idx_to_remove1))
+
+
+
+        # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
+        # Creating the dictionary for vlm_cls_input
+        vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
+
+        for incorrect_tag, corrected_tag in zip(incorrect_tags, corrected_tags):
+            self.update_confusion_matrix(vlm_cls_input_dict.get(incorrect_tag), corrected_tag)
+            # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
+            # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
+        # Print the confusion matrix
+        print("Confusion Matrix:")
+        for predicted_class, corrections in self.confusion_matrix.items():
+            print(f"{predicted_class}: {dict(corrections)}")
+
+        # Calculate probabilities
+        # probabilities = self.calculate_probabilities()
+        self.calculate_probabilities()
+        print("\nProbabilities:")
+        for predicted_class, corrections in self.probabilities.items():
+            for corrected_class, prob in corrections.items():
+                print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
         #### save all results
         # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
         self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
                               idx_to_remove1]
 
-        self.save_response_json(frame_num, self.output_dir, "results1.json",
+        self.save_filter_response_json(frame_num, self.output_dir, "results1.json",
                                 self.tag_filter_api.args.system_prompt, filter_txt_input,
-                                str_response1, (items_to_remove1, incorrect_tags, corrected_tags),
-                                self.tag_generator_api.args.system_prompt, tg_txt_input,
-                                tag_api_response, generated_tags
-                                )
+                                str_response1, (items_to_remove1, incorrect_tags, corrected_tags))
 
         print("remove: ", items_to_remove1)
 
