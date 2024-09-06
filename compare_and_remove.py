@@ -1126,12 +1126,29 @@ class Compare2DMapAndImage:
         # Creating the dictionary for vlm_cls_input
         vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
 
+        # confusion matrix for correct ones
+        # Filtering correct tags by excluding incorrect_tags
+        correct_tags = [idx for idx in vlm_cls_input_idx if idx not in incorrect_tags]
+        # Filtering correct class names based on correct tags
+        correct_cls_input = [cls_name for cls_name, idx in zip(vlm_cls_input, vlm_cls_input_idx) if idx not in incorrect_tags]
+        print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
+
+        for correct_tag, original_correct_tag in zip(correct_tags, correct_cls_input):
+            if original_correct_tag == 'empty':
+                continue
+            self.update_confusion_matrix(vlm_cls_input_dict.get(correct_tag), original_correct_tag)
+        # print("Confusion Matrix correct ones:")
+        # for predicted_class, corrections in self.confusion_matrix.items():
+        #     print(f"{predicted_class}: {dict(corrections)}")
+
         for incorrect_tag, corrected_tag in zip(incorrect_tags, corrected_tags):
+            if corrected_tag == 'empty':
+                continue
             self.update_confusion_matrix(vlm_cls_input_dict.get(incorrect_tag), corrected_tag)
             # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
             # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
         # Print the confusion matrix
-        print("Confusion Matrix:")
+        print("Confusion Matrix with everything:")
         for predicted_class, corrections in self.confusion_matrix.items():
             print(f"{predicted_class}: {dict(corrections)}")
 

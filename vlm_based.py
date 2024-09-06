@@ -29,6 +29,7 @@ EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 DETECTOR_VISUALIZATION_THRESHOLD = 0.6 # visualization threshold for (RAM+DINO)/2
+USE_PROBABILITIES = True  # use probabilities from the service to update class
 
 debug = True  # debugging mode
 debug_frame_num = 0
@@ -303,8 +304,8 @@ class ClosedSetDetector:
 
                 out_name = f"{debug_output_path}/confidences.txt"
                 with open(out_name, 'a', encoding='utf-8') as file:
-                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
                     file.write(f"detected : {classes}\n")
+                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
                     for i in range(len(detections.confidence)):
                         file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
                                    f"{detections.confidence[i]}\t"
@@ -333,11 +334,64 @@ class ClosedSetDetector:
                     mask[int(xyxy[1]):int(xyxy[3]), int(xyxy[0]):int(xyxy[2])] = 1.0
                 masks.append(mask)
 
-                ## subscribe and update self.classes here?
-                if classes[class_id] not in self.classes.values():
-                    self.classes[len(self.classes)] = classes[class_id]
+                # if use probabilities from the service to update class
+                conf_prior = (confidence + detections.ram_conf[i]) / 2 ## [TODO]: check if this is the right way to get the confidence
+                if USE_PROBABILITIES:
 
-                new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
+                    # updated_prob = dict()
+                    # updated_prob[classes[class_id]] = conf_prior # once update the confusion matrix, this line should be removed
+                    # corrections = self.probabilities[classes[class_id]]
+                    # for i, (corrected_class, prob) in enumerate(corrections.items()):
+                    #         ## [TODO]: conf_prior/# of different classes?
+                    #     updated_prob[corrected_class] = conf_prior/len(corrections.items()) *prob
+                    # # find the class with the highest probability
+                    # print(f'updated_prob: {updated_prob}')
+                    # updated_class_from_prob = max(updated_prob, key=updated_prob.get)
+                    # print(f'[class change] {classes[class_id]} -> {updated_class_from_prob}')
+
+                        ## This is a correct way of doing probability update when confusion matrix has original class itself. (we don't for now)
+                        # for i, (corrected_class, prob) in enumerate(corrections.items()):
+                        #     if corrected_class == classes[class_id]:
+                        #         updated_prob[corrected_class] = conf_prior*prob
+                        #     else:
+                        #         ## [TODO]: conf_prior/# of different classes?
+                        #         updated_prob[corrected_class] = conf_prior/len(corrections.items()) *prob
+                        #     print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
+
+                    updated_prob = dict()
+                    corrections = self.probabilities[classes[class_id]]
+                    for i, (corrected_class, prob) in enumerate(corrections.items()):
+                        if corrected_class == classes[class_id]:
+                            updated_prob[corrected_class] = conf_prior*prob
+                        else:
+                            ## [TODO]: conf_prior/# of different classes?
+                            updated_prob[corrected_class] = conf_prior/(len(corrections.items())-1) *prob # [TODO]: need to change divider
+                        print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
+
+                    if len(updated_prob) != 0:
+
+                        # find the class with the highest probability
+                        print(f'[updated_prob]: {updated_prob}')
+                        updated_class_from_prob = max(updated_prob, key=updated_prob.get)
+                        print(f'[class change] {classes[class_id]} -> {updated_class_from_prob}')
+
+
+                        if updated_class_from_prob not in self.classes.values():
+                            self.classes[len(self.classes)] = updated_class_from_prob
+
+                        new_cls_id = [key for key, value in self.classes.items() if value == updated_class_from_prob]
+                    else:
+                        if classes[class_id] not in self.classes.values():
+                            self.classes[len(self.classes)] = classes[class_id]
+
+                        new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
+
+                else:
+                    ## subscribe and update self.classes here?
+                    if classes[class_id] not in self.classes.values():
+                        self.classes[len(self.classes)] = classes[class_id]
+
+                    new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
 
                 class_ids.append(new_cls_id[0])
                 print(f'class_ids: {class_ids} new_cls_id: {new_cls_id[0]} class_name: {classes[class_id]} self.classes: {self.classes}')
@@ -347,12 +401,12 @@ class ClosedSetDetector:
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
 
-        if len(masks) == 0:
-            return
+        # if len(masks) == 0:
+        #     return
         for mask, class_id, bboxes, dino_conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
 
             #confidence to get =  (dino's conf + ram's conf) / 2
-            conf = (dino_conf + ram_conf) / 2
+            conf = (dino_conf + ram_conf) / 2 # [TODO]: check if this is the right way to get the confidence
 
             # ---- Object Vector ----
             object = ObjectVector()
@@ -370,9 +424,9 @@ class ClosedSetDetector:
                 print('inf nan passes')
                 continue
 
-            print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
+            # print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
             print(f'class_id: {class_id} object_name:{self.classes[class_id]} conf: {conf}')
-            print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
+            # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
 
             # Unproject centroid to 3D
             x, y, z = unproject(obj_centroid[1], obj_centroid[0], obj_depth, cam_info)
@@ -409,7 +463,9 @@ class ClosedSetDetector:
 
         ## subscibe class_names_string topic and update the class_names_string? If service was called..
 
-        print(f'classes: {self.classes} classlist: {self.classlist} class_names_string: {class_names_string}')
+        # print(f'classes: {self.classes} classlist: {self.classlist} class_names_string: {class_names_string}') ###
+
+
         ## update the class_names_string
         # if self.classlist != "":
         #     print(f'updating classlist: {self.classlist}')
