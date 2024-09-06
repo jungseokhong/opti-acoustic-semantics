@@ -19,22 +19,24 @@ class vision_filter(PrefixProto):
        Tag 5 (apple): Correct 
        Tag 6 (soccer ball): Correct
        Tag 7 (ball): Correct
+       Tag 8 (ball): Correct
        Tag 11 (chair): Incorrect. It contains <object name>  
        
    Step 2. Determine if there are multiple tags pointing to the same object among the tags identified as correct in Step 1. Return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
        example 1:
-       Tags[6, 7] : ball, soccer ball are visually pointing to the same object, which is a blue ball under the desk . <describe the look of an object>
+       Tags[6, 7, 8] : ball, soccer ball, ball are visually pointing to the same object, which is a blue ball under the desk . <describe the look of an object>
    
    Step 3. If there are multiple tags for one object from the response of Step 2, identify which tag is the most accurate. Choose one most precise tag. 
        example 1:
        Tag [6]: object name "soccer ball" is more precise. So, precise_tag = [7]
 
-   Step 4. Provide lists, <empty | incorrect | corrected | duplicated>_tags =[], results from Steps 1 and 3. [] if No tag.
+   Step 4. Provide lists, <empty | incorrect | corrected | duplicated | precise_tags_in_duplicated>_tags =[], results from Steps 1 and 3. [] if No tag.
        example 1:
        empty_tags = [1]
        incorrect_tags = [4, 11] 
        corrected_tags = ['<object name>', '<object name>']
-       duplicated_tags = [6] 
+       duplicated_tags = [(6, 7, 8), ()]
+       precise_tags_in_duplicated = [7] 
    """
 
 #     system_prompt = """

@@ -52,7 +52,9 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
+
 MODIFY_FUNCTION = False
+
 
 class Compare2DMapAndImage:
     def __init__(self):
@@ -206,7 +208,6 @@ class Compare2DMapAndImage:
         # Publish all class probabilities
         self.allclsprobs_pub.publish(allclass_probs)
         # rospy.loginfo(f"Publishing probabilities for all classes")
-
 
     def parse_data(self, map_info):
 
@@ -556,7 +557,6 @@ class Compare2DMapAndImage:
             cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, 1)  # tags
             self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
 
-
         # print text on the image
         for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
             tag_name = f"[{single_obj['i']}]"
@@ -564,12 +564,14 @@ class Compare2DMapAndImage:
                         (0, 0, 0), 1, cv2.LINE_AA)
 
             if cropped_imgs:
-                pre_projected = self.vlm_img_input[idx+1].copy()
+                pre_projected = self.vlm_img_input[idx + 1].copy()
                 add_w = int(tag_box_size // 1.3)
-                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w , tag_box_size), class_to_color[idx], 1)
+                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
                 cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], -1)
-                self.vlm_img_input[idx+1] = cv2.addWeighted(self.vlm_img_input[idx+1], alpha, pre_projected, 1 - alpha, 0, pre_projected)
-                cv2.putText(self.vlm_img_input[idx+1], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
+                self.vlm_img_input[idx + 1] = cv2.addWeighted(self.vlm_img_input[idx + 1], alpha, pre_projected,
+                                                              1 - alpha, 0, pre_projected)
+                cv2.putText(self.vlm_img_input[idx + 1], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX,
+                            0.65,
                             (0, 0, 0), 1, cv2.LINE_AA)
 
         return projected_image
@@ -806,6 +808,7 @@ class Compare2DMapAndImage:
         rest_response = response.split(keyword)[-1].split('[', 1)[-1].strip()
         part = rest_response.split(']')[0]
         extracted_list = '[' + part + ']'
+        extracted_list = extracted_list.replace("<", "").replace(">", "")
         extracted_list = literal_eval(extracted_list)
         return extracted_list, rest_response
 
@@ -828,14 +831,20 @@ class Compare2DMapAndImage:
             duplicated_tags, str_response = self.extract_list(str_response, 'duplicated_tags')
         except:
             duplicated_tags = []
+        try:
+            precise_tags, str_response = self.extract_list(str_response, 'precise_tags_in_duplicated_tags')
+        except:
+            precise_tags = []
 
-        tag_idx_to_remove = empty_tags + incorrect_tags + duplicated_tags
+        # less_precise = duplicated_tags - precise_tags
+        less_precise = [item for sublist in duplicated_tags for item in sublist if item not in precise_tags]
+        tag_idx_to_remove = empty_tags + incorrect_tags + less_precise
 
         # replace a cls id to a cls name
         tags_to_remove = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
                           tag_idx_to_remove]
 
-        return tags_to_remove, tag_idx_to_remove, (incorrect_tags, corrected_tags)
+        return tags_to_remove, tag_idx_to_remove, (incorrect_tags, corrected_tags), (duplicated_tags, precise_tags)
 
     def return_descriptive_tags(self, str_response, cls_names, cls_idc, cls_keys, cls_locations) -> None:
         cls_matched_descriptive_tags = []
@@ -925,11 +934,10 @@ class Compare2DMapAndImage:
             for corrected_class, count in corrections.items():
                 self.probabilities[predicted_class][corrected_class] = count / total_predictions
 
-        return True #self.probabilities
-
+        return True  # self.probabilities
 
     def save_filter_response_json(self, frame_num, output_dir, json_name,
-                           filter_prompts, filter_txt_input, filter_str_response, filtered_tags):
+                                  filter_prompts, filter_txt_input, filter_str_response, filtered_tags):
 
         ##save it to json file
         # json_path = output_dir / "results.json"
@@ -969,7 +977,7 @@ class Compare2DMapAndImage:
             json.dump(data, f, indent=4)
 
     def save_descriptor_response_json(self, frame_num, output_dir, json_name,
-                           tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
+                                      tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
 
         ##save it to json file
         # json_path = output_dir / "results.json"
@@ -1055,9 +1063,8 @@ class Compare2DMapAndImage:
                                                           vlm_cls_key, vlm_cls_location)
 
         self.save_descriptor_response_json(frame_num, self.output_dir, "results1.json",
-                            self.tag_generator_api.args.system_prompt, tg_txt_input, tag_api_response, generated_tags)
-
-
+                                           self.tag_generator_api.args.system_prompt, tg_txt_input, tag_api_response,
+                                           generated_tags)
 
     def get_model_output(self):
         if self.frame_num < 1:
@@ -1101,17 +1108,19 @@ class Compare2DMapAndImage:
 
         print(f"{filter_txt_input}")
 
-        # call api for filtering
+        ## call api for filtering
         self.tag_filter_api.reset_memory()  # remove memorise
         str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
-        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                           vlm_cls_input_idx)
-        # call api to generating descriptive tags
-        asyncio.run(self.tag_generator(frame_num, vlm_img_input,
-                                       vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
-                                       idx_to_remove1))
 
+        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags), (
+        duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+                                                                         vlm_cls_input_idx)
 
+        print(duplicated_tags, precise_tags)
+        ## call api to generating descriptive tags
+        # asyncio.run(self.tag_generator(frame_num, vlm_img_input,
+        #                                vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+        #                                idx_to_remove1))
 
         # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
         # Creating the dictionary for vlm_cls_input
@@ -1140,8 +1149,8 @@ class Compare2DMapAndImage:
                               idx_to_remove1]
 
         self.save_filter_response_json(frame_num, self.output_dir, "results1.json",
-                                self.tag_filter_api.args.system_prompt, filter_txt_input,
-                                str_response1, (items_to_remove1, incorrect_tags, corrected_tags))
+                                       self.tag_filter_api.args.system_prompt, filter_txt_input,
+                                       str_response1, (items_to_remove1, incorrect_tags, corrected_tags))
 
         print("remove: ", items_to_remove1)
 
@@ -1155,7 +1164,6 @@ class Compare2DMapAndImage:
             print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
 
         return True
-
 
     def call_remove_class_service(self, class_id):
         rospy.wait_for_service('remove_class')
@@ -1171,7 +1179,6 @@ class Compare2DMapAndImage:
             rospy.logerr("Service call failed: %s" % e)
             return False
 
-
     def call_remove_landmark_service(self, landmark_key):
         rospy.wait_for_service('remove_landmark')
         try:
@@ -1182,7 +1189,6 @@ class Compare2DMapAndImage:
         except rospy.ServiceException as e:
             rospy.logerr("Service call failed: %s" % e)
             return False
-
 
     ## TODO: Modifylandmark service implementation
     # this need to change the lm_to_class, etc
