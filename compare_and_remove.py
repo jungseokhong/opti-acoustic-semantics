@@ -54,7 +54,7 @@ def generate_unique_colors(num_colors):
 
 
 MODIFY_FUNCTION = False
-
+REMOVE_DUPLICATES = True
 
 class Compare2DMapAndImage:
     def __init__(self):
@@ -124,7 +124,12 @@ class Compare2DMapAndImage:
 
         # Initialize confusion matrix as a defaultdict of dicts
         self.confusion_matrix = defaultdict(lambda: defaultdict(int))
+        self.confusion_matrix_for_duplicates = defaultdict(lambda: defaultdict(int))
         self.probabilities = defaultdict(dict)
+        self.unique_precise_tags_list = []
+        self.duplicate_tags_list = []
+        self.landmark_keys_duplicated = []  # stores keys to remove landmarks (duplicating tags)
+
 
     def delete_file(self, path):
         if path.exists():
@@ -519,13 +524,14 @@ class Compare2DMapAndImage:
             for j, (bbox2, depth2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:])):
                 tl1, br1 = bbox1
                 tl2, br2 = bbox2
-                area1 = (br1[0] - tl1[0]) * (tl1[1] - br1[1])
-                area2 = (br2[0] - tl2[0]) * (tl2[1] - br2[1])
+                # opencv image coordinate system is top-left origin
+                area1 = (br1[0] - tl1[0]) * (-tl1[1] + br1[1])
+                area2 = (br2[0] - tl2[0]) * (-tl2[1] + br2[1])
 
-                intersect_tl = (max(tl1[0], tl2[0]), min(tl1[1], tl2[1]))
-                intersect_br = (min(br1[0], br2[0]), max(br1[1], br2[1]))
+                intersect_tl = (max(tl1[0], tl2[0]), max(tl1[1], tl2[1]))
+                intersect_br = (min(br1[0], br2[0]), min(br1[1], br2[1]))
 
-                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, intersect_tl[1] - intersect_br[1])
+                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
 
                 overlap = intersect_area / min(area1, area2)
 
@@ -535,6 +541,60 @@ class Compare2DMapAndImage:
                     else:
                         overlapping_indices.append(i + j + 1)
 
+        overlapping_indices = sorted(set(overlapping_indices), reverse=True)
+        for idx in overlapping_indices:
+            del bounding_boxes[idx]
+            del depths[idx]
+            del obj[idx]
+
+    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list):
+        overlapping_indices = []
+        
+        for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
+            if class1["label"] not in precise_tag_list:
+                continue
+            
+            for j, (bbox2, depth2, class2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:], obj[i + 1:])):
+                tl1, br1 = bbox1
+                tl2, br2 = bbox2
+                
+                # print(f'tl1: {tl1}, br1: {br1}, tl2: {tl2}, br2: {br2} bbox1: {bbox1}, bbox2: {bbox2}')
+                area1 = (br1[0] - tl1[0]) * (-(tl1[1] - br1[1]))
+                area2 = (br2[0] - tl2[0]) * (-(tl2[1] - br2[1]))
+
+                intersect_tl = (max(tl1[0], tl2[0]), max(tl1[1], tl2[1]))
+                intersect_br = (min(br1[0], br2[0]), min(br1[1], br2[1]))
+
+                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
+                overlap = intersect_area / min(area1, area2)
+
+                if overlap > 0.7 and abs(depth1 - depth2) < 0.5:
+                # if True:
+                    print(f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
+                    class1_label = class1["label"]
+                    class2_label = class2["label"]
+
+
+                    # Check if class2 (less precise) is semantically connected to class1 (precise)
+                    # print(f'class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+
+                    # for duplicated_class, precise_corrections in self.confusion_matrix_for_duplicates.items():
+                    #     print(f'precise_corrections keys: {precise_corrections.keys()}')
+                    #     if class1_label in precise_corrections.keys():
+                    #         print(f"Duplicate tag found: {duplicated_class} will be removed due to {class1_label}")
+                    #         overlapping_indices.append(i + j + 1)
+                    #         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+                            
+                    
+                    
+                    if class1_label in list(self.confusion_matrix_for_duplicates[class2_label].keys()):
+                        print(f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+                        # If connected by semantics, mark the less precise bounding box for removal
+                        overlapping_indices.append(i + j + 1)
+                        self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+                        print(f"Duplicate tag found: {class2_label} will be removed due to {class1_label}")
+
+        # Remove duplicates and reverse the list to safely delete without affecting indices
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
         for idx in overlapping_indices:
             del bounding_boxes[idx]
@@ -688,6 +748,7 @@ class Compare2DMapAndImage:
                 obj.append(obj_dic)
 
         self.removeoverlap(bounding_boxes, depths, obj)
+        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list)
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
@@ -924,6 +985,17 @@ class Compare2DMapAndImage:
         # Increment the count for the corrected class under the predicted class
         self.confusion_matrix[predicted_class][corrected_class] += 1
 
+    def update_confusion_matrix_for_duplicates(self, predicted_class, corrected_class):
+        """
+        Update the confusion matrix with the predicted and corrected class.
+
+        Args:
+            predicted_class (str): The class predicted by the object detector.
+            corrected_class (str): The class corrected by the VLM.
+        """
+        # Increment the count for the corrected class under the predicted class
+        self.confusion_matrix_for_duplicates[predicted_class][corrected_class] += 1
+
     def calculate_probabilities(self):
         """
         Calculate and print the probability of each predicted class being corrected to each other class.
@@ -1117,14 +1189,48 @@ class Compare2DMapAndImage:
                                                                          vlm_cls_input_idx)
 
         print(duplicated_tags, precise_tags)
-        ## call api to generating descriptive tags
-        # asyncio.run(self.tag_generator(frame_num, vlm_img_input,
-        #                                vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
-        #                                idx_to_remove1))
+        # call api to generating descriptive tags
+        asyncio.run(self.tag_generator(frame_num, vlm_img_input,
+                                       vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+                                       idx_to_remove1))
 
         # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
         # Creating the dictionary for vlm_cls_input
         vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
+
+
+        # Update the confusion matrix dynamically
+        for k, (duplicated_tag_group, precise_tag) in enumerate(zip(duplicated_tags, precise_tags)):
+            
+            # Get the precise tag value from the dictionary
+            precise_tag_value = vlm_cls_input_dict.get(precise_tag)
+
+            # Ensure the precise tag value is unique
+            if precise_tag_value not in self.unique_precise_tags_list:
+                self.unique_precise_tags_list.append(precise_tag_value)
+
+            for duplicated_tag in duplicated_tag_group:
+                # Get the duplicate tag value from the dictionary
+                duplicate_tag_value = vlm_cls_input_dict.get(duplicated_tag)
+                if duplicate_tag_value != precise_tag_value:
+                    self.update_confusion_matrix_for_duplicates(duplicate_tag_value, precise_tag_value)
+                    # Add the duplicate tag to the list
+                    if duplicate_tag_value not in self.duplicate_tags_list:
+                        self.duplicate_tags_list.append(duplicate_tag_value)
+        print("Unique Precise Tags:", self.unique_precise_tags_list)
+        print("Duplicate Tags:", self.duplicate_tags_list)
+
+        print("Confusion Matrix duplicate:")
+        for predicted_class, corrections in self.confusion_matrix_for_duplicates.items():
+            print(f"{predicted_class}: {dict(corrections)}")
+        
+        # Confusion Matrix duplicate:
+        # fan: {'mechanical fan': 3}
+        # mechanical fan: {'mechanical fan': 3}
+        # toy: {'snowman': 4}
+        # snowman: {'snowman': 4}
+        # racket: {'tennis racket': 1}
+        # tennis racket: {'tennis racket': 1}
 
         # confusion matrix for correct ones
         # Filtering correct tags by excluding incorrect_tags
@@ -1149,17 +1255,17 @@ class Compare2DMapAndImage:
             # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
             # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
         # Print the confusion matrix
-        print("Confusion Matrix with everything:")
-        for predicted_class, corrections in self.confusion_matrix.items():
-            print(f"{predicted_class}: {dict(corrections)}")
+        # print("Confusion Matrix with everything:")
+        # for predicted_class, corrections in self.confusion_matrix.items():
+        #     print(f"{predicted_class}: {dict(corrections)}")
 
         # Calculate probabilities
         # probabilities = self.calculate_probabilities()
         self.calculate_probabilities()
-        print("\nProbabilities:")
-        for predicted_class, corrections in self.probabilities.items():
-            for corrected_class, prob in corrections.items():
-                print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
+        # print("\nProbabilities:")
+        # for predicted_class, corrections in self.probabilities.items():
+        #     for corrected_class, prob in corrections.items():
+        #         print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
         #### save all results
         # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
@@ -1230,6 +1336,13 @@ if __name__ == "__main__":
     while not rospy.is_shutdown():
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
+        
+        if REMOVE_DUPLICATES:
+            print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
+            for landmark_key in detector.landmark_keys_duplicated:
+                success = detector.call_remove_landmark_service(landmark_key)
+                rospy.loginfo("Service call success (duplicated): %s" % success)
+        detector.landmark_keys_duplicated = []
 
         for landmark_key in detector.landmark_keys:
             success = detector.call_remove_landmark_service(landmark_key)
