@@ -303,8 +303,8 @@ class ClosedSetDetector:
 
                 out_name = f"{debug_output_path}/confidences.txt"
                 with open(out_name, 'a', encoding='utf-8') as file:
-                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
                     file.write(f"detected : {classes}\n")
+                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
                     for i in range(len(detections.confidence)):
                         file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
                                    f"{detections.confidence[i]}\t"
@@ -347,8 +347,8 @@ class ClosedSetDetector:
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
 
-        if len(masks) == 0:
-            return
+        # if len(masks) == 0:
+        #     return
         for mask, class_id, bboxes, dino_conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
 
             #confidence to get =  (dino's conf + ram's conf) / 2
