@@ -360,7 +360,7 @@ class ClosedSetDetector:
 
                     updated_prob = dict()
                     corrections = self.probabilities[classes[class_id]]
-                    for i, (corrected_class, prob) in enumerate(corrections.items()):
+                    for j, (corrected_class, prob) in enumerate(corrections.items()):
                         if corrected_class == classes[class_id]:
                             updated_prob[corrected_class] = conf_prior*prob
                         else:
