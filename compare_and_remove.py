@@ -1134,6 +1134,7 @@ class Compare2DMapAndImage:
         print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
 
         for correct_tag, original_correct_tag in zip(correct_tags, correct_cls_input):
+            # if the tag has been removed then we don't need to update the confusion matrix
             if original_correct_tag == 'empty':
                 continue
             self.update_confusion_matrix(vlm_cls_input_dict.get(correct_tag), original_correct_tag)
