@@ -56,6 +56,7 @@ def generate_unique_colors(num_colors):
 MODIFY_FUNCTION = False
 REMOVE_DUPLICATES = True
 
+
 class Compare2DMapAndImage:
     def __init__(self):
 
@@ -129,7 +130,6 @@ class Compare2DMapAndImage:
         self.unique_precise_tags_list = []
         self.duplicate_tags_list = []
         self.landmark_keys_duplicated = []  # stores keys to remove landmarks (duplicating tags)
-
 
     def delete_file(self, path):
         if path.exists():
@@ -549,15 +549,15 @@ class Compare2DMapAndImage:
 
     def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list):
         overlapping_indices = []
-        
+
         for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
             if class1["label"] not in precise_tag_list:
                 continue
-            
+
             for j, (bbox2, depth2, class2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:], obj[i + 1:])):
                 tl1, br1 = bbox1
                 tl2, br2 = bbox2
-                
+
                 # print(f'tl1: {tl1}, br1: {br1}, tl2: {tl2}, br2: {br2} bbox1: {bbox1}, bbox2: {bbox2}')
                 area1 = (br1[0] - tl1[0]) * (-(tl1[1] - br1[1]))
                 area2 = (br2[0] - tl2[0]) * (-(tl2[1] - br2[1]))
@@ -569,11 +569,11 @@ class Compare2DMapAndImage:
                 overlap = intersect_area / min(area1, area2)
 
                 if overlap > 0.7 and abs(depth1 - depth2) < 0.5:
-                # if True:
-                    print(f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
+                    # if True:
+                    print(
+                        f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
                     class1_label = class1["label"]
                     class2_label = class2["label"]
-
 
                     # Check if class2 (less precise) is semantically connected to class1 (precise)
                     # print(f'class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
@@ -584,11 +584,10 @@ class Compare2DMapAndImage:
                     #         print(f"Duplicate tag found: {duplicated_class} will be removed due to {class1_label}")
                     #         overlapping_indices.append(i + j + 1)
                     #         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
-                            
-                    
-                    
+
                     if class1_label in list(self.confusion_matrix_for_duplicates[class2_label].keys()):
-                        print(f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+                        print(
+                            f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
                         # If connected by semantics, mark the less precise bounding box for removal
                         overlapping_indices.append(i + j + 1)
                         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
@@ -1097,9 +1096,8 @@ class Compare2DMapAndImage:
         if len(all_keys) < 1:
             no_need_description = []
         else:
-            no_need_description = np.where(np.isin(vlm_cls_key, all_keys))[0]
             # if the key is already existed in the descriptive tag list # might not need this part
-            # no_need_description = np.array([])
+            # no_need_description = np.where(np.isin(vlm_cls_key, all_keys))[0]
 
             # if the tag is already descriptive
             all_tags = [[sub_key, par_key] for par_key in exist_descriptive_tags.keys() for sub_key in
@@ -1185,8 +1183,8 @@ class Compare2DMapAndImage:
         str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
 
         items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags), (
-        duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                         vlm_cls_input_idx)
+            duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+                                                                             vlm_cls_input_idx)
 
         print(duplicated_tags, precise_tags)
         # call api to generating descriptive tags
@@ -1198,10 +1196,9 @@ class Compare2DMapAndImage:
         # Creating the dictionary for vlm_cls_input
         vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
 
-
         # Update the confusion matrix dynamically
         for k, (duplicated_tag_group, precise_tag) in enumerate(zip(duplicated_tags, precise_tags)):
-            
+
             # Get the precise tag value from the dictionary
             precise_tag_value = vlm_cls_input_dict.get(precise_tag)
 
@@ -1223,7 +1220,7 @@ class Compare2DMapAndImage:
         print("Confusion Matrix duplicate:")
         for predicted_class, corrections in self.confusion_matrix_for_duplicates.items():
             print(f"{predicted_class}: {dict(corrections)}")
-        
+
         # Confusion Matrix duplicate:
         # fan: {'mechanical fan': 3}
         # mechanical fan: {'mechanical fan': 3}
@@ -1236,7 +1233,8 @@ class Compare2DMapAndImage:
         # Filtering correct tags by excluding incorrect_tags
         correct_tags = [idx for idx in vlm_cls_input_idx if idx not in incorrect_tags]
         # Filtering correct class names based on correct tags
-        correct_cls_input = [cls_name for cls_name, idx in zip(vlm_cls_input, vlm_cls_input_idx) if idx not in incorrect_tags]
+        correct_cls_input = [cls_name for cls_name, idx in zip(vlm_cls_input, vlm_cls_input_idx) if
+                             idx not in incorrect_tags]
         print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
 
         for correct_tag, original_correct_tag in zip(correct_tags, correct_cls_input):
@@ -1336,7 +1334,7 @@ if __name__ == "__main__":
     while not rospy.is_shutdown():
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
-        
+
         if REMOVE_DUPLICATES:
             print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
             for landmark_key in detector.landmark_keys_duplicated:
