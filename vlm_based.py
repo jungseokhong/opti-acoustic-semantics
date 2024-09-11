@@ -145,8 +145,8 @@ class ClosedSetDetector:
         # )
 
         # JACKAL PARAMS
-        cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/rgb/camera_info")
-        rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/rgb/image_rect_color")
+        cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/left/camera_info")
+        rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/left/image_rect_color")
         depth_topic = rospy.get_param("depth_topic", "/zed2i/zed_node/depth/depth_registered")
         allclsprobs_topic = rospy.get_param("allclsprobs", "/allclass_probabilities")
 

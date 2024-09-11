@@ -90,12 +90,12 @@ class Compare2DMapAndImage:
 
         self.bridge = CvBridge()
         self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
-        self.rgb_sub = message_filters.Subscriber('/zed2i/zed_node/rgb/image_rect_color', RosImage)
+        self.rgb_sub = message_filters.Subscriber('/zed2i/zed_node/left/image_rect_color', RosImage)
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.classlist_sub = message_filters.Subscriber('/camera/objects', ObjectsVector)
 
         # Separate subscriber for CameraInfo
-        self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/rgb/camera_info', CameraInfo, self.camera_info_callback)
+        self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/left/camera_info', CameraInfo, self.camera_info_callback)
 
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
         self.allclsprobs_pub = rospy.Publisher('/allclass_probabilities', AllClassProbabilities, queue_size=10)
