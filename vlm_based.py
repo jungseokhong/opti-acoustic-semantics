@@ -26,7 +26,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.3  # 0.76  # Confidence threshold used for the detector, default is 0.5
+DETECTOR__CONF_THRESH = 0.4  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 DETECTOR_VISUALIZATION_THRESHOLD = DETECTOR__CONF_THRESH # visualization threshold for (RAM+DINO)/2
 USE_PROBABILITIES = True  # use probabilities from the service to update class
@@ -259,7 +259,7 @@ class ClosedSetDetector:
                 "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
             ## once classnames are updated, it can be turned into string
             class_names_string = ", ".join(classNames)
-
+            ram_confs = confs.copy()
         else:  # self.method = "ram"
 
             image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
