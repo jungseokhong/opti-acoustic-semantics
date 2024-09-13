@@ -62,6 +62,7 @@ class Compare2DMapAndImage:
 
         self.save_projections = True
         self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
+        self.output_dir2 = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output/labels"
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
@@ -178,7 +179,7 @@ class Compare2DMapAndImage:
         projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points,
                                                                      landmark_classes,
                                                                      landmark_widths, landmark_heights, landmark_keys,
-                                                                     img=rgbimg_cv)
+                                                                     yoloimg_cv, img=rgbimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -479,7 +480,8 @@ class Compare2DMapAndImage:
 
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, 1)  # tag
                 # cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
-                self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+                if landmark_classes[i] != "none":
+                    self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
 
                 # tag_name = f"[{i}]"
                 # cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -603,7 +605,10 @@ class Compare2DMapAndImage:
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
                         class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
         tag_area = []  # To determine if tags  are overlapping
-        for ((tlx, tly), (brx, bry)), color in zip(bounding_boxes, class_to_color.values()):
+        for single_obj, ((tlx, tly), (brx, bry)), color in zip(obj, bounding_boxes, class_to_color.values()):
+            if single_obj['label']=="none":
+                continue
+
             # get tag_box positions
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
 
@@ -618,11 +623,15 @@ class Compare2DMapAndImage:
 
         # print text on the image
         for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
+            if single_obj['label']=="none":
+                continue
             tag_name = f"[{single_obj['i']}]"
             cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
                         (0, 0, 0), 1, cv2.LINE_AA)
 
             if cropped_imgs:
+                if single_obj['label']=="none":
+                    continue
                 pre_projected = self.vlm_img_input[idx + 1].copy()
                 add_w = int(tag_box_size // 1.3)
                 cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
@@ -635,10 +644,125 @@ class Compare2DMapAndImage:
 
         return projected_image
 
+
+    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
+        tag_area = []  # To determine if tags are overlapping
+        image_height, image_width = projected_image.shape[:2]  # Get image dimensions
+
+        # To track the next available position for the label on the right side
+        label_y_offset = 20  # Starting y-coordinate for the first label from the top right corner
+
+        for ((tlx, tly), (brx, bry)), single_obj, color in zip(bounding_boxes, obj, class_to_color.values()):
+            if single_obj['label']=="none":
+                continue 
+            # Get tag_box positions
+            (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
+
+            pre_projected = projected_image.copy()
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx, brp_y), color, -1)  # Tag
+            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # Bounding box
+
+            # Draw a circle at the center of the bounding box
+            center_x = int((tlx + brx) / 2)
+            center_y = int((tly + bry) / 2)
+            cv2.circle(projected_image, (center_x, center_y), 5, color, -1)  # Center circle
+
+            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+            # Draw the dashed rectangle around the bounding box
+            self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+
+        # Now place the labels and draw dashed lines
+        # for idx, (single_obj, ((tlx, tly), (brx, bry))) in enumerate(zip(obj, bounding_boxes)):
+            # Determine the label position on the right side (top-right corner of the image)
+            label_text = single_obj['label']
+            text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_TRIPLEX, 0.65, 1)[0]
+            label_x = image_width - text_size[0] - 10
+            label_y = label_y_offset + text_size[1]
+
+            # Increase the offset for the next label to avoid overlap
+            label_y_offset += text_size[1] + 20  # 20-pixel vertical space between labels
+
+            # Draw a semi-transparent white box behind the text
+            box_padding = 5
+            box_tl = (label_x - box_padding, label_y - text_size[1] - box_padding)
+            box_br = (label_x + text_size[0] + box_padding, label_y + box_padding)
+            cv2.rectangle(projected_image, box_tl, box_br, (255, 255, 255), -1)  # White box
+            cv2.addWeighted(projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.4, 
+                            projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.6, 0, 
+                            projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]])  # More transparent white box
+
+            # Draw the label text over the semi-transparent box
+            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA)
+
+            # Draw a dashed line from each bounding box center to its respective label
+            center_x = int((tlx + brx) / 2)
+            center_y = int((tly + bry) / 2)
+            self.draw_dashed_line(projected_image, (center_x, center_y), (label_x, label_y - text_size[1] // 2), color, dash_length=5)
+
+        # Save the final image
+        output_path = self.output_dir2 / "{:05d}_landmarklabel.png".format(self.frame_num)
+        cv2.imwrite(str(output_path), projected_image)
+        output_path = self.output_dir2 / "{:05d}_groundingdino.png".format(self.frame_num)
+        cv2.imwrite(str(output_path), yolo_img)
+
+
+        # Convert NumPy arrays to lists for JSON serialization
+        frame_data = {
+            'frame_num': self.frame_num,
+            'position': position.tolist(),  # Convert to list
+            'rotation_matrix': rotation_matrix.tolist(),  # Convert to list
+            'landmark_points': [point.tolist() for point in landmark_points],  # Convert each point to list
+            'landmark_classes': landmark_classes.tolist()
+        }
+
+        # Path for the JSON file
+        json_path = os.path.join(self.output_dir2, 'landmarks.json')
+
+        # Load the JSON file safely with error handling for corruption or empty file
+        try:
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+            else:
+                data = []
+        except (json.decoder.JSONDecodeError, ValueError) as e:
+            # If the file is corrupted or empty, reset to an empty list
+            print(f"Error reading JSON file {json_path}: {e}. Initializing new JSON data.")
+            data = []
+
+        # Append the current frame's data to the list
+        data.append(frame_data)
+
+        # Write updated data back to the JSON file
+        with open(json_path, 'w') as f:
+            json.dump(data, f, indent=4)
+
+        return projected_image
+
+    # Additional helper function for drawing dashed lines
+    def draw_dashed_line(self, image, start_point, end_point, color, dash_length=5):
+        # Calculate distance and direction between points
+        x1, y1 = start_point
+        x2, y2 = end_point
+        dist = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        dashes = int(dist / dash_length)
+        for i in range(dashes):
+            pt1 = (
+                int(x1 + i / dashes * (x2 - x1)),
+                int(y1 + i / dashes * (y2 - y1))
+            )
+            pt2 = (
+                int(x1 + (i + 0.5) / dashes * (x2 - x1)),
+                int(y1 + (i + 0.5) / dashes * (y2 - y1))
+            )
+            cv2.line(image, pt1, pt2, color, 1)
+
+
     def projectLandmarksToImage_removeoverlap(self, position, orientation,
                                               landmark_points, landmark_classes,
                                               landmark_widths, landmark_heights, landmark_keys,
-                                              img=None):
+                                              yolo_img, img=None):
         # Quaternion to rotation matrix conversion
         q = orientation
 
@@ -748,7 +872,11 @@ class Compare2DMapAndImage:
 
         self.removeoverlap(bounding_boxes, depths, obj)
         self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list)
+        projected_image2 = projected_image.copy()
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
+                                               obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
+        projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
+                                                      projected_image2, bounding_boxes,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
@@ -1335,25 +1463,26 @@ if __name__ == "__main__":
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
 
-        if REMOVE_DUPLICATES:
-            print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
-            for landmark_key in detector.landmark_keys_duplicated:
-                success = detector.call_remove_landmark_service(landmark_key)
-                rospy.loginfo("Service call success (duplicated): %s" % success)
-        detector.landmark_keys_duplicated = []
+        # if REMOVE_DUPLICATES:
+        #     print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
+        #     for landmark_key in detector.landmark_keys_duplicated:
+        #         success = detector.call_remove_landmark_service(landmark_key)
+        #         rospy.loginfo("Service call success (duplicated): %s" % success)
+        # detector.landmark_keys_duplicated = []
 
-        for landmark_key in detector.landmark_keys:
-            success = detector.call_remove_landmark_service(landmark_key)
-            rospy.loginfo("Service call success: %s" % success)
-        detector.landmark_keys = []
+        # for landmark_key in detector.landmark_keys:
+        #     success = detector.call_remove_landmark_service(landmark_key)
+        #     rospy.loginfo("Service call success: %s" % success)
+        # detector.landmark_keys = []
 
-        if MODIFY_FUNCTION:
+        if True:
+        # if MODIFY_FUNCTION:
             ## TODO: debug this part
             ## TODO: how to handle the case when detector.landmark_keys overlaps with detector.landmark_keys_to_modify
-            for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
+            for i, landmark_key in enumerate(detector.landmark_keys):
                 print("here=====================================")
                 ## implement dictionary for to have new class name for each landmark_key
-                success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
+                success = detector.call_modify_landmark_service(landmark_key, "none")
                 rospy.loginfo("Service call success: %s" % success)
             detector.landmark_keys_to_modify = []
             detector.newclasses_for_landmarks = []
