@@ -21,11 +21,12 @@ from PIL import Image as PILImage
 from sensor_msgs.msg import Image as RosImage
 import sys
 from collections import defaultdict
+import spacy
 
 np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
-EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
+EMBEDDING_LEN = 300  # Length of the embedding vector, default is 512
 DETECTOR__CONF_THRESH = 0.4  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 DETECTOR_VISUALIZATION_THRESHOLD = DETECTOR__CONF_THRESH # visualization threshold for (RAM+DINO)/2
@@ -98,6 +99,7 @@ class ClosedSetDetector:
         rospy.loginfo("detector started")
         rospy.loginfo("updateclasslist service started")
         self.update_classes_service = rospy.Service('/update_classlist', UpdateClasslist, self.handle_update_classes)
+        self.nlp = spacy.load('en_core_web_md')
 
         if method == "ram":
             import sys
@@ -449,7 +451,8 @@ class ClosedSetDetector:
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
 
             #####todo: might need to change it?
-            object.latent_centroid[class_id] = 1
+            # object.latent_centroid[class_id] = 1
+            object.latent_centroid = self.nlp(str(self.classes[class_id])).vector
             object.class_id = class_id
             object.det_conf = conf
             object.ram_conf = ram_conf
