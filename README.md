@@ -61,3 +61,31 @@ Prerequisite: git clone llm-mapping repo
 $ export PYTHONPATH=code/Grounded-Segment-Anything/GroundingDINO:code/Grounded-Segment-Anything/segment_anything:$PYTHONPATH
 $ python vlm_based.py
 ```
+
+## wordembedding
+
+```
+pip install -U pip setuptools wheel
+pip install spacy
+```
+
+if not working,
+
+```
+git clone https://github.com/explosion/spaCy
+git checkout v3.7.2
+cd spaCy
+
+(if you have venv ignore this)
+python -m venv .env
+source .env/bin/activate
+
+(start from here)
+# make sure you are using the latest pip
+python -m pip install -U pip setuptools wheel
+
+pip install -r requirements.txt
+pip install --no-build-isolation --editable .
+python -m spacy download en_core_web_md
+export PYTHONPATH=/your/directory/spaCy:$PYTHONPATH
+```
