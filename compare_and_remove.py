@@ -63,6 +63,7 @@ class Compare2DMapAndImage:
         self.save_projections = True
         self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
         self.output_dir2 = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output/labels"
+        self.output_dir2.mkdir(exist_ok=True, parents=True)
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
@@ -651,21 +652,29 @@ class Compare2DMapAndImage:
 
         # To track the next available position for the label on the right side
         label_y_offset = 20  # Starting y-coordinate for the first label from the top right corner
-
+        letters = []
         for ((tlx, tly), (brx, bry)), single_obj, color in zip(bounding_boxes, obj, class_to_color.values()):
             if single_obj['label']=="none":
-                continue 
+                continue
+
+            label_text = single_obj['label']
+            text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_TRIPLEX, 0.65, 1)[0]
+
             # Get tag_box positions
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
 
             pre_projected = projected_image.copy()
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx, brp_y), color, -1)  # Tag
+            #cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx, brp_y), color, -1)  # Tag
+            #tag_x_padding = 0 if (brx - tlp_x) > text_size[0] + 10 else  text_size[0] + 5 - (brx - tlp_x)  #txt box padding
+            tag_x_padding = text_size[0] + 5 - (brx - tlp_x)
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1)
+
             cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # Bounding box
 
             # Draw a circle at the center of the bounding box
-            center_x = int((tlx + brx) / 2)
-            center_y = int((tly + bry) / 2)
-            cv2.circle(projected_image, (center_x, center_y), 5, color, -1)  # Center circle
+            # center_x = int((tlx + brx) / 2)
+            # center_y = int((tly + bry) / 2)
+            # cv2.circle(projected_image, (center_x, center_y), 5, color, -1)  # Center circle
 
             projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
@@ -675,10 +684,12 @@ class Compare2DMapAndImage:
         # Now place the labels and draw dashed lines
         # for idx, (single_obj, ((tlx, tly), (brx, bry))) in enumerate(zip(obj, bounding_boxes)):
             # Determine the label position on the right side (top-right corner of the image)
-            label_text = single_obj['label']
-            text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_TRIPLEX, 0.65, 1)[0]
-            label_x = image_width - text_size[0] - 10
-            label_y = label_y_offset + text_size[1]
+
+            # label_x = image_width - text_size[0] - 10
+            # label_y = label_y_offset + text_size[1]
+            label_x = tlx + 5
+            label_y = tly + 20
+            letters.append((label_text, label_x, label_y))
 
             # Increase the offset for the next label to avoid overlap
             label_y_offset += text_size[1] + 20  # 20-pixel vertical space between labels
@@ -687,18 +698,21 @@ class Compare2DMapAndImage:
             box_padding = 5
             box_tl = (label_x - box_padding, label_y - text_size[1] - box_padding)
             box_br = (label_x + text_size[0] + box_padding, label_y + box_padding)
-            cv2.rectangle(projected_image, box_tl, box_br, (255, 255, 255), -1)  # White box
+            #cv2.rectangle(projected_image, box_tl, box_br, (255, 255, 255), -1)  # White box
+
             cv2.addWeighted(projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.4, 
                             projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.6, 0, 
                             projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]])  # More transparent white box
 
             # Draw the label text over the semi-transparent box
-            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0, 0, 0), 1, cv2.LINE_AA)
+            #cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX , 0.65, (0, 0, 0), 1, cv2.LINE_AA)
 
             # Draw a dashed line from each bounding box center to its respective label
-            center_x = int((tlx + brx) / 2)
-            center_y = int((tly + bry) / 2)
-            self.draw_dashed_line(projected_image, (center_x, center_y), (label_x, label_y - text_size[1] // 2), color, dash_length=5)
+            # center_x = int((tlx + brx) / 2)
+            # center_y = int((tly + bry) / 2)
+            # self.draw_dashed_line(projected_image, (center_x, center_y), (label_x, label_y - text_size[1] // 2), color, dash_length=5)
+
+        [ cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX , 0.65, (0, 0, 0), 1, cv2.LINE_AA) for (label_text, label_x, label_y) in letters]
 
         # Save the final image
         output_path = self.output_dir2 / "{:05d}_landmarklabel.png".format(self.frame_num)
@@ -823,6 +837,7 @@ class Compare2DMapAndImage:
         obj = []
         tag_area = []
         bounding_boxes = []
+        bbox_wo_padding = []
         depths = []
 
         self.vlm_img_input = []
@@ -858,16 +873,28 @@ class Compare2DMapAndImage:
                 bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height \
                     else self.img_height - 2
 
+                #get valid bbox wo padding
+                tlx_wo = (x - scaled_width // 2) if (x - scaled_width // 2)  >= 0 else 1
+                tly_wo = (y - scaled_height // 2)  if (y - scaled_height // 2)  >= 0 else 1
+                brx_wo = (x + scaled_width // 2)  if (x + scaled_width // 2)  < self.img_width \
+                    else self.img_width - 2
+                bry_wo = (y + scaled_height // 2)  if (y + scaled_height // 2)  < self.img_height \
+                    else self.img_height - 2
+
                 ##add cropped images
                 self.vlm_img_input.append(img[tly:bry, tlx:brx].copy())
 
                 bounding_boxes.append(((tlx, tly), (brx, bry)))
+                bbox_wo_padding.append(((tlx_wo, tly_wo), (brx_wo, bry_wo)))
                 depths.append(Z)
 
                 # save inf
                 obj_dic = {"label": landmark_classes[i],
                            "x": x, "y": y, "z": Z, "i": i,
-                           "landmark_key": str(landmark_key)}
+                           "landmark_key": str(landmark_key),
+                           "bbox": [tlx, tly, brx, bry],
+                           "bbox_wo_padding" : [tlx_wo, tly_wo, brx_wo, bry_wo]
+                           }
                 obj.append(obj_dic)
 
         self.removeoverlap(bounding_boxes, depths, obj)
@@ -876,7 +903,7 @@ class Compare2DMapAndImage:
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
         projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
-                                                      projected_image2, bounding_boxes,
+                                                      projected_image2, bbox_wo_padding,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
@@ -890,14 +917,15 @@ class Compare2DMapAndImage:
             # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
 
-            self.save_img(img, projected_image)
+            self.save_img(img, projected_image)#, projected_image_label)
+
             self.save_json(json_out, self.output_dir)
 
         # self.vlm_img_input = projected_image
         self.vlm_img_input[0] = projected_image
         return projected_image
 
-    def save_img(self, img, projected_image):
+    def save_img(self, img, projected_image, additional=None):
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -906,6 +934,10 @@ class Compare2DMapAndImage:
 
         _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), projected_image)
+
+        if additional is not None:
+            _output_path = output_path / "{:05d}_proj_wopad.png".format(self.frame_num)
+            cv2.imwrite(str(_output_path), additional)
 
     def save_json(self, json_out, output_dir):
         json_path = json_out["image_idx"][:-4] + ".json"

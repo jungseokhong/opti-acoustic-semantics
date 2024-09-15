@@ -11,7 +11,7 @@ class tag_generator(PrefixProto):
     # Use the cropped images for reference.
     system_prompt = """
 
-Step 1: Identify the features of the object inside the bounding box for each tag number. If there are multiple objects of the same category around the scene, list each object with its unique color separately.
+Step 1: Identify the features of the object inside the bounding box for each tag number. If there are multiple objects of the same category in the scene, list each object with its unique color separately.
  1. Color: What is the primary color of the <object>? If there are multiple objects of the same category, list each object with its unique color separately.
  2. Shape: What shape or structural features does the <object> have?
  3. Unique features: What features most effectively distinguish this <object> from similar objects?
