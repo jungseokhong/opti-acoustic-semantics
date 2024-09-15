@@ -723,8 +723,8 @@ class Compare2DMapAndImage:
 
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
                 # padding  bbox size + 5%
-                add_w = int((scaled_width * 1.05) // 2)
-                add_h = int((scaled_height * 1.05) // 2)
+                add_w = int((scaled_width * 1.0) // 2)
+                add_h = int((scaled_height * 1.0) // 2)
 
                 # get valid bounding box positions
                 tlx = (x - scaled_width // 2) - add_w if (x - scaled_width // 2) - add_w >= 0 else 1
