@@ -39,7 +39,12 @@ general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
                               'floor', 'ceiling', 'carpet', 'mat',
                              'restroom', 'bathroom', 'dressing',
                              'person', 'child',
-                             'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
+                             'black', 'yellow', 'red', 'blue', 'white', 'waiting room', 'floor mat', 
+                             'lay', 'office building','surface','yoga mat','radio', 'speaker', 'air conditioner',
+                             'tripod', 'stand', 'miniature', 'sit', 'Wii controller', 'mess',
+                             'banana peel', 'stuff', 'pillar', 'concrete', 'cement',
+                             'wall mark', 'wall marks','floor', 'green',
+                             'table', 'office chair'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
     """
@@ -245,19 +250,19 @@ class ClosedSetDetector:
             classNames = [
                 "person", "bicycle", "car", "motorcycle", "airplane",
                 "bus", "train", "truck", "boat", "traffic light",
-                "fire hydrant", "stop sign", "parking meter", "benchhhh", "bird",
+                "fire hydrant", "stop sign", "parking meter", "bench", "bird",
                 "cat", "dog", "horse", "sheep", "cow",
                 "elephant", "bear", "zebra", "giraffe", "backpack",
                 "umbrella", "handbag", "tie", "suitcase", "frisbee",
                 "skis", "snowboard", "sports ball", "kite", "baseball bat",
                 "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
-                "wine glass", "cupppp", "fork", "knife", "spoon",
+                "wine glass", "cup", "fork", "knife", "spoon",
                 "bowl", "banana", "apple", "sandwich", "orange",
                 "broccoli", "carrot", "hot dog", "pizza", "donut",
                 "cake", "chair", "couch", "potted plant", "bed",
                 "dining table", "toilet", "tv", "laptop", "mouse",
                 "remote", "keyboard", "cell phone", "microwave", "oven",
-                "toaster", "sink", "refrigerator", "bookkk", "clock",
+                "toaster", "sink", "refrigerator", "book", "clock",
                 "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
             ## once classnames are updated, it can be turned into string
             class_names_string = ", ".join(classNames)
