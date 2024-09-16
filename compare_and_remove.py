@@ -1495,20 +1495,20 @@ if __name__ == "__main__":
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
 
-        # if REMOVE_DUPLICATES:
-        #     print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
-        #     for landmark_key in detector.landmark_keys_duplicated:
-        #         success = detector.call_remove_landmark_service(landmark_key)
-        #         rospy.loginfo("Service call success (duplicated): %s" % success)
-        # detector.landmark_keys_duplicated = []
+        if REMOVE_DUPLICATES:
+            print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
+            for landmark_key in detector.landmark_keys_duplicated:
+                success = detector.call_remove_landmark_service(landmark_key)
+                rospy.loginfo("Service call success (duplicated): %s" % success)
+        detector.landmark_keys_duplicated = []
 
-        # for landmark_key in detector.landmark_keys:
-        #     success = detector.call_remove_landmark_service(landmark_key)
-        #     rospy.loginfo("Service call success: %s" % success)
-        # detector.landmark_keys = []
+        for landmark_key in detector.landmark_keys:
+            success = detector.call_remove_landmark_service(landmark_key)
+            rospy.loginfo("Service call success: %s" % success)
+        detector.landmark_keys = []
 
-        if True:
-        # if MODIFY_FUNCTION:
+        # if True:
+        if MODIFY_FUNCTION:
             ## TODO: debug this part
             ## TODO: how to handle the case when detector.landmark_keys overlaps with detector.landmark_keys_to_modify
             for i, landmark_key in enumerate(detector.landmark_keys):
