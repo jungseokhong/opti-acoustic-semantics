@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from dotenv import load_dotenv
 
+from descriptive_tag_generator import tag_generator
+
 load_dotenv()
 
 import os
@@ -13,16 +15,21 @@ import rospy
 from cv_bridge import CvBridge
 import cv2
 from openai import OpenAI
-from semanticslam_ros.msg import MapInfo, ObjectsVector
+from semanticslam_ros.msg import MapInfo, ObjectsVector, AllClassProbabilities, ClassProbabilities
 
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image as RosImage
 from scipy.spatial.transform import Rotation as R
 from semanticslam_ros.srv import RemoveClass, RemoveClassRequest
 from semanticslam_ros.srv import RemoveLandmark, RemoveLandmarkRequest
+from semanticslam_ros.srv import ModifyLandmark, ModifyLandmarkRequest
+import asyncio
+
 from ast import literal_eval
 
 from vlm_filter_utils import vision_filter
+
+from collections import defaultdict
 
 import sys
 
@@ -45,12 +52,17 @@ def generate_unique_colors(num_colors):
     random.shuffle(colors)
     return colors
 
+
+MODIFY_FUNCTION = False
+REMOVE_DUPLICATES = True
+
+
 class Compare2DMapAndImage:
     def __init__(self):
 
         self.save_projections = True
-        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_mocap_2"
-        self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
+        self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
+        # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -70,28 +82,32 @@ class Compare2DMapAndImage:
         self.classlist = []
         self.classstring = ""
         self.landmark_keys = []  # stores keys to remove landmarks
+        self.landmark_keys_to_modify = []  # stores keys to modify landmarks
+        self.newclasses_for_landmarks = []  # stores new classes for landmarks
 
         self.num_classes = 20  # Example: Specify the number of classes
         self.colors = generate_unique_colors(self.num_classes)  # Generate unique colors for these classes
 
         self.bridge = CvBridge()
-        # self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
-        self.yoloimg_sub = message_filters.Subscriber('/zed2i/zed_node/rgb/image_rect_color', RosImage)
+        self.yoloimg_sub = message_filters.Subscriber('/camera/yolo_img', RosImage)
+        self.rgb_sub = message_filters.Subscriber('/zed2i/zed_node/left/image_rect_color', RosImage)
         self.mapinfo_sub = message_filters.Subscriber('/mapinfo', MapInfo)
         self.classlist_sub = message_filters.Subscriber('/camera/objects', ObjectsVector)
 
         # Separate subscriber for CameraInfo
-        self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/rgb/camera_info', CameraInfo, self.camera_info_callback)
+        self.cam_info_sub = rospy.Subscriber('/zed2i/zed_node/left/camera_info', CameraInfo, self.camera_info_callback)
 
         self.compare_pub = rospy.Publisher("/compareresults", RosImage, queue_size=10)
+        self.allclsprobs_pub = rospy.Publisher('/allclass_probabilities', AllClassProbabilities, queue_size=10)
 
         # Use a cache for the mapinfo_sub to store messages
         self.mapinfo_cache = message_filters.Cache(self.mapinfo_sub, 500)
+        self.rgb_cache = message_filters.Cache(self.rgb_sub, 500)
         self.yoloimg_cache = message_filters.Cache(self.yoloimg_sub, 500)
         self.classlist_cache = message_filters.Cache(self.classlist_sub, 500)
 
         self.sync = message_filters.ApproximateTimeSynchronizer(
-            (self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
+            (self.rgb_sub, self.yoloimg_sub, self.mapinfo_cache, self.classlist_cache), 500, 0.005
         )  # 0.025 need to reduce this time difference
         # # need to update so it can handle time offset/pass time offset
 
@@ -99,15 +115,21 @@ class Compare2DMapAndImage:
 
         self.frame_num = 0
         self.client = OpenAI()
-        self.vlm_filter = vision_agent(vision_filter)
+        self.tag_filter_api = vision_agent(vision_filter)
+        self.tag_generator_api = vision_agent(tag_generator)
 
-        #####comparison set
-        self.compare_promts = False
-        if self.compare_promts:
-            from vlm_filter_utils import vision_another_filter
-            self.vlm_filter_com = vision_agent(vision_another_filter)
-            self.output_com_dir = Path(os.environ['DATASETS']) / "llm_data/rosbag_output_bbox_comp"
-            self.delete_file(self.output_com_dir / "results.json")
+        self.descriptive_tag_json = Path.cwd() / "descriptive_tags"
+        self.descriptive_tag_json.mkdir(exist_ok=True)
+        self.descriptive_tag_json = self.descriptive_tag_json / "descriptive_tags.json"
+        self.delete_file(self.descriptive_tag_json)
+
+        # Initialize confusion matrix as a defaultdict of dicts
+        self.confusion_matrix = defaultdict(lambda: defaultdict(int))
+        self.confusion_matrix_for_duplicates = defaultdict(lambda: defaultdict(int))
+        self.probabilities = defaultdict(dict)
+        self.unique_precise_tags_list = []
+        self.duplicate_tags_list = []
+        self.landmark_keys_duplicated = []  # stores keys to remove landmarks (duplicating tags)
 
     def delete_file(self, path):
         if path.exists():
@@ -125,7 +147,7 @@ class Compare2DMapAndImage:
                            [0, fy, cy],
                            [0, 0, 1]])
 
-    def forward_pass(self, yoloimg: RosImage, map_info: MapInfo, objects_info: ObjectsVector) -> None:
+    def forward_pass(self, rgbimg: RosImage, yoloimg: RosImage, map_info: MapInfo, objects_info: ObjectsVector) -> None:
 
         # Print the timestamps of the messages
         yoloimg_time = yoloimg.header.stamp
@@ -146,14 +168,17 @@ class Compare2DMapAndImage:
 
         # Convert ROS Image to OpenCV Image
         yoloimg_cv = self.bridge.imgmsg_to_cv2(yoloimg, desired_encoding='bgr8')
+        rgbimg_cv = self.bridge.imgmsg_to_cv2(rgbimg, desired_encoding='bgr8')
         # print(map_info)
 
         # Extract data from map_info
         position, orientation, landmark_points, landmark_classes, landmark_widths, landmark_heights, landmark_keys = self.parse_data(
             map_info)
         # Project landmarks to the image
-        projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points, landmark_classes,
-                                                       landmark_widths, landmark_heights, landmark_keys, img=yoloimg_cv)
+        projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points,
+                                                                     landmark_classes,
+                                                                     landmark_widths, landmark_heights, landmark_keys,
+                                                                     img=rgbimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -170,6 +195,24 @@ class Compare2DMapAndImage:
 
         # Publish the ROS Image
         self.compare_pub.publish(ros_image)
+
+        ## [TODO]: this may not be the perfect place to publish all class probabilities
+
+        allclass_probs = AllClassProbabilities()
+        allclass_probs.header = rgbimg.header
+        allclass_probs.classes = []
+
+        for predicted_class, corrections in self.probabilities.items():
+            classes_prob = ClassProbabilities()
+            classes_prob.predicted_class = predicted_class
+            classes_prob.corrected_classes = list(corrections.keys())
+            classes_prob.probabilities = list(corrections.values())
+            allclass_probs.classes.append(classes_prob)
+            # print(f'length of allclass_probs.classes: {len(allclass_probs.classes)}')
+
+        # Publish all class probabilities
+        self.allclsprobs_pub.publish(allclass_probs)
+        # rospy.loginfo(f"Publishing probabilities for all classes")
 
     def parse_data(self, map_info):
 
@@ -213,7 +256,7 @@ class Compare2DMapAndImage:
 
         return position_array, orientation_array, landmark_points_array, landmark_classes_array, landmark_widths_array, landmark_heights_array, landmark_keys_array
 
-    def draw_dashed_rectangle(self, img, pt1, pt2, color = (0, 0, 0), thickness = 1, dash_length = 1):
+    def draw_dashed_rectangle(self, img, pt1, pt2, color=(0, 0, 0), thickness=1, dash_length=1):
         x1, y1 = pt1
         x2, y2 = pt2
         # hor
@@ -242,7 +285,7 @@ class Compare2DMapAndImage:
                 brp_y = tly
             tlp_x = tlx
             brp_x = tlx + box_size + add_w
-        elif edge == "lt_o": #left-top
+        elif edge == "lt_o":  # left-top
             if tlx - box_size - add_w < 0:
                 tlp_x = tlx  # inside
                 brp_x = tlx + box_size + add_w
@@ -285,7 +328,7 @@ class Compare2DMapAndImage:
             brp_y = bry
             tlp_x = brx - box_size - add_w
             brp_x = brx
-        else: #edge == "br_o":
+        else:  # edge == "br_o":
             if bry + box_size > self.img_height:
                 tlp_y = bry - box_size  # inside
                 brp_y = bry
@@ -304,7 +347,6 @@ class Compare2DMapAndImage:
         for edge_mode in edge:
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_edge(edge_mode, tlx, tly, brx, bry, box_size, add_w)
             if tag_area == []:
-                # print(edge_mode)
                 tag_area.append((tlp_x, tlp_y, brp_x, brp_y))
                 return ((tlp_x, tlp_y), (brp_x, brp_y))
             overlapping = False
@@ -389,18 +431,14 @@ class Compare2DMapAndImage:
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
             # Compute the Euclidean distance between the point and the camera position
             Z = np.linalg.norm(point_3d - position)
-            # Pass if the landmark z location is behind the camera's location
-            if point_3d_camera_frame[2] < 0:
-                # print(f'landmark_key : {landmark_key}, point_3d_camera_frame: {point_3d_camera_frame}')
-                continue
 
+            # Pass if the landmark z location is behind the camera's location
             # Project landmarks only less than 5m away from current position. need better algorithm to filter this.
-            if Z >= 5:
+            if point_3d_camera_frame[2] < 0 or Z >= 5:
                 continue
 
             # Scale widths and heights based on the depth
-            scale_factor_w = self.K[
-                                 0, 0] / Z  # Assuming fx is used for scaling (can adjust this formula based on actual focal length and depth behavior)
+            scale_factor_w = self.K[0, 0] / Z
             scale_factor_h = self.K[1, 1] / Z
             scaled_width = int(landmark_widths[i] * scale_factor_w)
             scaled_height = int(landmark_heights[i] * scale_factor_h)
@@ -412,13 +450,16 @@ class Compare2DMapAndImage:
                 # increse bbox size + 5%
                 add_w = int((scaled_width * 1.05) // 2)
                 add_h = int((scaled_height * 1.05) // 2)
+
                 # Calculate top-left and bottom-right corners
                 tlx = (x - scaled_width // 2) - add_w if (x - scaled_width // 2) - add_w >= 0 else 1
                 tly = (y - scaled_height // 2) - add_h if (y - scaled_height // 2) - add_h >= 0 else 1
-                brx = (x + scaled_width // 2) + add_w if (x + scaled_width // 2) + add_w < self.img_width else self.img_width - 2
-                bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height else self.img_height - 2
+                brx = (x + scaled_width // 2) + add_w if (
+                                                                 x + scaled_width // 2) + add_w < self.img_width else self.img_width - 2
+                bry = (y + scaled_height // 2) + add_h if (
+                                                                  y + scaled_height // 2) + add_h < self.img_height else self.img_height - 2
 
-                ##crop an img
+                ##addcrop an img
                 self.vlm_img_input.append(img[tly:bry, tlx:brx])
                 # frame_num_txt = "{:05d}".format(self.frame_num + 1)
                 # cv2.imwrite(f"{self.output_dir}/{frame_num_txt}_{i}.png", img[tly:bry, tlx:brx])
@@ -437,8 +478,8 @@ class Compare2DMapAndImage:
                 projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
 
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, 1)  # tag
-                #cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
-                self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length = 5)
+                # cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
+                self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
 
                 # tag_name = f"[{i}]"
                 # cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -464,8 +505,8 @@ class Compare2DMapAndImage:
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
         self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
 
+        self.frame_num += 1
         if self.save_projections:
-            self.frame_num += 1
             json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
             # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
@@ -476,11 +517,128 @@ class Compare2DMapAndImage:
         # self.vlm_img_input = projected_image
         self.vlm_img_input[0] = projected_image
         return projected_image
-    
 
-    def projectLandmarksToImage_removeoverlap(self, position, orientation, landmark_points, landmark_classes, landmark_widths,
-                                landmark_heights, landmark_keys, img=None):
+    def removeoverlap(self, bounding_boxes, depths, obj):
+        overlapping_indices = []
+        for i, (bbox1, depth1) in enumerate(zip(bounding_boxes, depths)):
+            for j, (bbox2, depth2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:])):
+                tl1, br1 = bbox1
+                tl2, br2 = bbox2
+                # opencv image coordinate system is top-left origin
+                area1 = (br1[0] - tl1[0]) * (-tl1[1] + br1[1])
+                area2 = (br2[0] - tl2[0]) * (-tl2[1] + br2[1])
 
+                intersect_tl = (max(tl1[0], tl2[0]), max(tl1[1], tl2[1]))
+                intersect_br = (min(br1[0], br2[0]), min(br1[1], br2[1]))
+
+                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
+
+                overlap = intersect_area / min(area1, area2)
+
+                if overlap > 0.7 and abs(depth1 - depth2) > 5:
+                    if depth1 > depth2:
+                        overlapping_indices.append(i)
+                    else:
+                        overlapping_indices.append(i + j + 1)
+
+        overlapping_indices = sorted(set(overlapping_indices), reverse=True)
+        for idx in overlapping_indices:
+            del bounding_boxes[idx]
+            del depths[idx]
+            del obj[idx]
+
+    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list):
+        overlapping_indices = []
+
+        for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
+            if class1["label"] not in precise_tag_list:
+                continue
+
+            for j, (bbox2, depth2, class2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:], obj[i + 1:])):
+                tl1, br1 = bbox1
+                tl2, br2 = bbox2
+
+                # print(f'tl1: {tl1}, br1: {br1}, tl2: {tl2}, br2: {br2} bbox1: {bbox1}, bbox2: {bbox2}')
+                area1 = (br1[0] - tl1[0]) * (-(tl1[1] - br1[1]))
+                area2 = (br2[0] - tl2[0]) * (-(tl2[1] - br2[1]))
+
+                intersect_tl = (max(tl1[0], tl2[0]), max(tl1[1], tl2[1]))
+                intersect_br = (min(br1[0], br2[0]), min(br1[1], br2[1]))
+
+                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
+                overlap = intersect_area / min(area1, area2)
+
+                if overlap > 0.7 and abs(depth1 - depth2) < 0.5:
+                    # if True:
+                    print(
+                        f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
+                    class1_label = class1["label"]
+                    class2_label = class2["label"]
+
+                    # Check if class2 (less precise) is semantically connected to class1 (precise)
+                    # print(f'class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+
+                    # for duplicated_class, precise_corrections in self.confusion_matrix_for_duplicates.items():
+                    #     print(f'precise_corrections keys: {precise_corrections.keys()}')
+                    #     if class1_label in precise_corrections.keys():
+                    #         print(f"Duplicate tag found: {duplicated_class} will be removed due to {class1_label}")
+                    #         overlapping_indices.append(i + j + 1)
+                    #         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+
+                    if class1_label in list(self.confusion_matrix_for_duplicates[class2_label].keys()):
+                        print(
+                            f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+                        # If connected by semantics, mark the less precise bounding box for removal
+                        overlapping_indices.append(i + j + 1)
+                        self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+                        print(f"Duplicate tag found: {class2_label} will be removed due to {class1_label}")
+
+        # Remove duplicates and reverse the list to safely delete without affecting indices
+        overlapping_indices = sorted(set(overlapping_indices), reverse=True)
+        for idx in overlapping_indices:
+            del bounding_boxes[idx]
+            del depths[idx]
+            del obj[idx]
+
+    def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
+                        class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
+        tag_area = []  # To determine if tags  are overlapping
+        for ((tlx, tly), (brx, bry)), color in zip(bounding_boxes, class_to_color.values()):
+            # get tag_box positions
+            (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
+
+            pre_projected = projected_image.copy()
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, -1)  # tag
+            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # bounding box
+
+            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, 1)  # tags
+            self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+
+        # print text on the image
+        for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
+            tag_name = f"[{single_obj['i']}]"
+            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
+                        (0, 0, 0), 1, cv2.LINE_AA)
+
+            if cropped_imgs:
+                pre_projected = self.vlm_img_input[idx + 1].copy()
+                add_w = int(tag_box_size // 1.3)
+                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
+                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], -1)
+                self.vlm_img_input[idx + 1] = cv2.addWeighted(self.vlm_img_input[idx + 1], alpha, pre_projected,
+                                                              1 - alpha, 0, pre_projected)
+                cv2.putText(self.vlm_img_input[idx + 1], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX,
+                            0.65,
+                            (0, 0, 0), 1, cv2.LINE_AA)
+
+        return projected_image
+
+    def projectLandmarksToImage_removeoverlap(self, position, orientation,
+                                              landmark_points, landmark_classes,
+                                              landmark_widths, landmark_heights, landmark_keys,
+                                              img=None):
         # Quaternion to rotation matrix conversion
         q = orientation
 
@@ -531,6 +689,7 @@ class Compare2DMapAndImage:
             projected_image = img.copy()
         else:
             projected_image = np.zeros((self.img_height, self.img_width, 3), dtype=np.uint8)
+
         # Map class indices to colors
         class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
         # print(f"landmark widths {landmark_widths} landmark_heights {landmark_heights}, 2dpoints {points_2d_homo}")
@@ -542,7 +701,9 @@ class Compare2DMapAndImage:
         bounding_boxes = []
         depths = []
 
-        pre_projected = projected_image.copy()
+        self.vlm_img_input = []
+        self.vlm_img_input.append(img.copy())
+
         for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(
                 zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
             x, y = int(point_2d[0] / point_2d[2]), int(point_2d[1] / point_2d[2])
@@ -561,71 +722,42 @@ class Compare2DMapAndImage:
             scaled_height = int(landmark_heights[i] * scale_factor_h)
 
             if 0 <= x < self.img_width and 0 <= y < self.img_height:
-                tlx = x - scaled_width // 2 if x - scaled_width // 2 >= 0 else 0
-                tly = y - scaled_height // 2 if y - scaled_height // 2 >= 0 else 0
-                brx = x + scaled_width // 2 if x + scaled_width // 2 < self.img_width else self.img_width - 1
-                bry = y + scaled_height // 2 if y + scaled_height // 2 < self.img_height else self.img_height - 1
+                # padding  bbox size + 5%
+                add_w = int((scaled_width * 1.0) // 2)
+                add_h = int((scaled_height * 1.0) // 2)
+
+                # get valid bounding box positions
+                tlx = (x - scaled_width // 2) - add_w if (x - scaled_width // 2) - add_w >= 0 else 1
+                tly = (y - scaled_height // 2) - add_h if (y - scaled_height // 2) - add_h >= 0 else 1
+                brx = (x + scaled_width // 2) + add_w if (x + scaled_width // 2) + add_w < self.img_width \
+                    else self.img_width - 2
+                bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height \
+                    else self.img_height - 2
+
+                ##add cropped images
+                self.vlm_img_input.append(img[tly:bry, tlx:brx].copy())
 
                 bounding_boxes.append(((tlx, tly), (brx, bry)))
                 depths.append(Z)
-                b_size = 20
-                tag_tl, tag_br = self.tag_box(tlx, tly, brx, bry, b_size, tag_area)
 
+                # save inf
                 obj_dic = {"label": landmark_classes[i],
-                           "x": x,
-                           "y": y,
-                           "z": Z,
-                           "i": i,
-                           "landmark_key": str(landmark_key)
-                           }
+                           "x": x, "y": y, "z": Z, "i": i,
+                           "landmark_key": str(landmark_key)}
                 obj.append(obj_dic)
 
-
-        overlapping_indices = []
-        for i, (bbox1, depth1) in enumerate(zip(bounding_boxes, depths)):
-            for j, (bbox2, depth2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:])):
-                tl1, br1 = bbox1
-                tl2, br2 = bbox2
-                area1 = (br1[0] - tl1[0]) * (tl1[1] - br1[1])
-                area2 = (br2[0] - tl2[0]) * (tl2[1] - br2[1])
-
-                intersect_tl = (max(tl1[0], tl2[0]), min(tl1[1], tl2[1]))
-                intersect_br = (min(br1[0], br2[0]), max(br1[1], br2[1]))
-
-                intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, intersect_tl[1] - intersect_br[1])
-
-                overlap = intersect_area / min(area1, area2)
-
-                if overlap > 0.7 and abs(depth1 - depth2) > 5:
-                    if depth1 > depth2:
-                        overlapping_indices.append(i)
-                    else:
-                        overlapping_indices.append(i + j + 1)
-
-        overlapping_indices = sorted(set(overlapping_indices), reverse=True)
-        for idx in overlapping_indices:
-            del bounding_boxes[idx]
-            del depths[idx]
-            del tag_area[idx]
-
-        for ((tlx, tly), (brx, bry)), (tlp_x, tlp_y, brp_x, brp_y), color in zip(bounding_boxes, tag_area, class_to_color.values()):
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, -1)  # tag
-            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 2)  # bounding box
-        alpha = 0.4
-        projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
-
-        # print text on the image
-        for single_obj, tag in zip(obj, tag_area):
-            tag_name = f"[{single_obj['i']}]"
-            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (0, 0, 0), 1)
+        self.removeoverlap(bounding_boxes, depths, obj)
+        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list)
+        projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
+                                               obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
         self.vlm_cls_input_idx = [d["i"] for d in obj]  # index
+        self.vlm_cls_location = [[d["x"], d["y"], d["z"]] for d in obj]
 
+        self.frame_num += 1
         if self.save_projections:
-            self.frame_num += 1
             json_out["image_idx"] = "{:05d}_ori.png".format(self.frame_num)
             # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
@@ -633,13 +765,11 @@ class Compare2DMapAndImage:
             self.save_img(img, projected_image)
             self.save_json(json_out, self.output_dir)
 
-        self.vlm_img_input = projected_image
+        # self.vlm_img_input = projected_image
+        self.vlm_img_input[0] = projected_image
         return projected_image
 
-
-
     def save_img(self, img, projected_image):
-
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -655,6 +785,18 @@ class Compare2DMapAndImage:
 
         with open(json_path, "w") as f:
             json.dump(json_out, f, indent=4)
+
+    def save_json_from_path(self, json_path, conts) -> None:
+        with open(json_path, "w") as f:
+            json.dump(conts, f, indent=4)
+
+    def open_json(self, json_path) -> dict:
+        if Path(json_path).exists():
+            with open(json_path, 'r') as file:
+                data = json.load(file)
+        else:
+            data = {}
+        return data
 
     def combine_images(self, img1, img2):
         # Ensure both images are the same height
@@ -684,7 +826,8 @@ class Compare2DMapAndImage:
             return [-1]  # Returns -1 if the class is not found
 
     def call_api_with_img(self, vlm_filter, vlm_img_input, txt_input):
-        vlm_response = vlm_filter.call_vision_agent_with_image_input(vlm_img_input, txt_input, self.client)
+        vlm_response = vlm_filter.call_vision_agent_with_image_input(imgs=vlm_img_input, command=txt_input,
+                                                                     client=self.client)
         str_response = return_str(vlm_response)
         return str_response
 
@@ -697,20 +840,20 @@ class Compare2DMapAndImage:
         user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
         commant = """\nExamples of each step's output for the given image and its tags:\n"""
         assistant_commant = """Step 1. 
-    Tag 0 (cup): Incorrect.The bounding box contains a ball.
-    Tag 1 (book): Correct. 
-    Tag 3 (baseball hat): Correct. 
-    Tag 4 (baseball hat): Correct.   
-    Tag 7 (hat): Correct. 
-Step 2. 
-    Tags [3, 4, 7] are pointing to the same object. 
-Step 3. 
-    Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on only a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
-Step 4. 
-    unmatched_tags = [0]
-    unmatched_tags = [3, 7]
-Step 5.
-    unmatched_tags = [0, 3, 7] """
+        Tag 0 (cup): Incorrect.The bounding box contains a ball.
+        Tag 1 (book): Correct. 
+        Tag 3 (baseball hat): Correct. 
+        Tag 4 (baseball hat): Correct.   
+        Tag 7 (hat): Correct. 
+    Step 2. 
+        Tags [3, 4, 7] are pointing to the same object. 
+    Step 3. 
+        Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on only a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
+    Step 4. 
+        unmatched_tags = [0]
+        unmatched_tags = [3, 7]
+    Step 5.
+        unmatched_tags = [0, 3, 7] """
 
         vlm_filter.reset_with_img(role="user", prompt=user_commant,
                                   img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
@@ -721,23 +864,152 @@ Step 5.
         #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
         #
 
+    def extract_list(self, response, keyword):
+        rest_response = response.split(keyword)[-1].split('[', 1)[-1].strip()
+        part = rest_response.split(']')[0]
+        extracted_list = '[' + part + ']'
+        extracted_list = extracted_list.replace("<", "").replace(">", "")
+        extracted_list = literal_eval(extracted_list)
+        return extracted_list, rest_response
+
     def return_landmarks_to_remove(self, str_response, vlm_cls_input, vlm_cls_input_idx):
         ## Extract the part of the string that represents the list
-        list_from_idx = str_response.split('=')[-1].strip()
 
         try:
-            list_from_idx = literal_eval(list_from_idx)
+            empty_tags, str_response = self.extract_list(str_response, 'empty_tags')
         except:
-            print(f"\nerror during extract the result list..{list_from_idx}\n")
-            list_from_idx = []  # prevent the program from stopping
+            empty_tags = []
+        try:
+            incorrect_tags, str_response = self.extract_list(str_response, 'incorrect_tags')
+        except:
+            incorrect_tags = []
+        try:
+            corrected_tags, str_response = self.extract_list(str_response, 'corrected_tags')
+        except:
+            corrected_tags = []
+        try:
+            duplicated_tags, str_response = self.extract_list(str_response, 'duplicated_tags')
+        except:
+            duplicated_tags = []
+        try:
+            precise_tags, str_response = self.extract_list(str_response, 'precise_tags_in_duplicated_tags')
+        except:
+            precise_tags = []
+
+        # less_precise = duplicated_tags - precise_tags
+        less_precise = [item for sublist in duplicated_tags for item in sublist if item not in precise_tags]
+        tag_idx_to_remove = empty_tags + incorrect_tags + less_precise
 
         # replace a cls id to a cls name
-        list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
-                            list_from_idx]
+        tags_to_remove = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+                          tag_idx_to_remove]
 
-        return list_from_string, list_from_idx
+        return tags_to_remove, tag_idx_to_remove, (incorrect_tags, corrected_tags), (duplicated_tags, precise_tags)
 
-    def save_response_json(self, prompts, txt_input, str_response, frame_num, list_from_string, output_dir, json_name):
+    def return_descriptive_tags(self, str_response, cls_names, cls_idc, cls_keys, cls_locations) -> None:
+        cls_matched_descriptive_tags = []
+        cls_idx_matched_descriptive_tags = []
+        cls_key_matched_descriptive_tags = []
+        cls_key_matched_locations = []
+        parts = str_response.split('tag_')
+
+        for part in parts[1:]:
+            part = part.replace("*", " ")
+            tag_list = part.split('=')
+            cls_idx = int(tag_list[0].strip())
+            tag_list = tag_list[1].split('\']')[0] + '\']'
+            try:
+                base = np.where(np.isin(cls_idc, cls_idx))[0][0]
+                tag_list = literal_eval(tag_list.strip())
+
+                cls_matched_descriptive_tags.append(cls_names[base])
+                cls_idx_matched_descriptive_tags.append(tag_list)
+                cls_key_matched_descriptive_tags.append(cls_keys[base])
+                cls_key_matched_locations.append(cls_locations[base])
+                print("generated tags:", tag_list)
+
+            except:
+                print(f"\nerror during extract the result list..{part}\n")
+
+        if len(cls_matched_descriptive_tags) < 1:
+            return []
+
+        # save json file
+        data = self.open_json(self.descriptive_tag_json)
+
+        for general_tag, descriptive_tags, general_tag_key, location in zip(cls_matched_descriptive_tags,
+                                                                            cls_idx_matched_descriptive_tags,
+                                                                            cls_key_matched_descriptive_tags,
+                                                                            cls_key_matched_locations):
+
+            info = {int(general_tag_key): {"features": descriptive_tags, "location": location}}
+            if general_tag not in data:
+                data[general_tag] = {}
+            if f'{descriptive_tags[0]}' not in data[general_tag]:
+                data[general_tag][f'{descriptive_tags[0]}'] = info
+
+        self.save_json_from_path(self.descriptive_tag_json, data)
+        return tag_list
+
+    ## TODO: finalize this function
+    def return_landmarks_to_modify(self, str_response, vlm_cls_input, vlm_cls_input_idx):
+        ## Extract the part of the string that represents the list
+        # list_from_idx = str_response.split('=')[-1].strip()
+        ## hopefully, str_response has a idx for each landmark and what to change it do.
+        ## e.g. [1] -> "red book"
+        # return 1: "red book", 3 : "blue cup"
+
+        # try:
+        #     list_from_idx = literal_eval(list_from_idx)
+        # except:
+        #     print(f"\nerror during extract the result list..{list_from_idx}\n")
+        #     list_from_idx = []  # prevent the program from stopping
+
+        # # replace a cls id to a cls name
+        # list_from_string = [vlm_cls_input[vlm_cls_input_idx.index(int(i))] for i in
+        #                     list_from_idx]
+        # modify_dic = {1: "red book", 0: "blue cup"}
+        modify_dic = {0: "blue cup"}
+
+        return modify_dic
+
+    def update_confusion_matrix(self, predicted_class, corrected_class):
+        """
+        Update the confusion matrix with the predicted and corrected class.
+
+        Args:
+            predicted_class (str): The class predicted by the object detector.
+            corrected_class (str): The class corrected by the VLM.
+        """
+        # Increment the count for the corrected class under the predicted class
+        self.confusion_matrix[predicted_class][corrected_class] += 1
+
+    def update_confusion_matrix_for_duplicates(self, predicted_class, corrected_class):
+        """
+        Update the confusion matrix with the predicted and corrected class.
+
+        Args:
+            predicted_class (str): The class predicted by the object detector.
+            corrected_class (str): The class corrected by the VLM.
+        """
+        # Increment the count for the corrected class under the predicted class
+        self.confusion_matrix_for_duplicates[predicted_class][corrected_class] += 1
+
+    def calculate_probabilities(self):
+        """
+        Calculate and print the probability of each predicted class being corrected to each other class.
+        """
+        # probabilities = defaultdict(dict)
+        for predicted_class, corrections in self.confusion_matrix.items():
+            total_predictions = sum(corrections.values())
+            for corrected_class, count in corrections.items():
+                self.probabilities[predicted_class][corrected_class] = count / total_predictions
+
+        return True  # self.probabilities
+
+    def save_filter_response_json(self, frame_num, output_dir, json_name,
+                                  filter_prompts, filter_txt_input, filter_str_response, filtered_tags):
+
         ##save it to json file
         # json_path = output_dir / "results.json"
         json_path = output_dir / json_name
@@ -746,27 +1018,125 @@ Step 5.
             data = json.load(f)
         else:
             output_dir.mkdir(parents=True, exist_ok=True)
-            data = {"prompts": prompts.split('\n'), "{:05d}.png".format(frame_num): {}}
+            data = {"filter_prompts": filter_prompts.split('\n'),
+                    "{:05d}.png".format(frame_num): {}
+                    }
 
-        if "prompts" not in data:
+        # todo : remove this part? no need to write again
+        if "filter_prompts" not in data:
             new_data = {}
-            new_data["prompts"] = prompts.split('\n')
-            for key in data.keys():
+            new_data["filter_prompts"] = filter_prompts.split('\n')
+            for key in data:
                 new_data[key] = data[key]
             data = new_data
 
         if "{:05d}.png".format(frame_num) not in data:
             data["{:05d}.png".format(frame_num)] = {}
 
-        str_response = str_response.split('\n')
-        json_out = {"text_input": txt_input, "vlm_response": str_response, "filtered out": list_from_string}
-        data["{:05d}.png".format(frame_num)]["vlm_filter"] = json_out
+        if type(filtered_tags).__name__ == "list":
+            json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
+                        "filtered_out": filtered_tags}
+        else:
+            items_to_remove1, incorrect_tags, corrected_tags = filtered_tags
+            json_out = {"filter_text_input": filter_txt_input, "filter_response": filter_str_response.split('\n'),
+                        "filtered_out": items_to_remove1,
+                        "incorrect_tag_idx": incorrect_tags, "corrected_tags": corrected_tags}
+
+        data["{:05d}.png".format(frame_num)]["llm_filter"] = json_out
 
         with open(json_path, "w") as f:
             json.dump(data, f, indent=4)
 
-    def get_model_output(self):
+    def save_descriptor_response_json(self, frame_num, output_dir, json_name,
+                                      tg_prompts, tg_txt_input, tg_str_response, descriptive_tags):
 
+        ##save it to json file
+        # json_path = output_dir / "results.json"
+        json_path = output_dir / json_name
+        if json_path.exists():
+            f = open(json_path)
+            data = json.load(f)
+        else:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            data = {"tag_generator_prompts": tg_prompts.split('\n'),
+                    "{:05d}.png".format(frame_num): {}
+                    }
+
+        # todo : remove this part? no need to write again
+        if "tg_prompts" not in data:
+            new_data = {}
+            new_data["tag_generator_prompts"] = tg_prompts.split('\n')
+            for key in data:
+                new_data[key] = data[key]
+            data = new_data
+
+        if "{:05d}.png".format(frame_num) not in data:
+            data["{:05d}.png".format(frame_num)] = {}
+
+        json_out = {"tg_text_input": tg_txt_input, "tg_response": tg_str_response.split('\n'),
+                    "generated_tag": descriptive_tags}
+        data["{:05d}.png".format(frame_num)]["llm_tagger"] = json_out
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+    async def tag_generator(self, frame_num, vlm_img_input,
+                            vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+                            idx_to_remove1):
+
+        ## generate descriptive tags
+        exist_descriptive_tags = self.open_json(self.descriptive_tag_json)
+        no_need_description = []
+
+        # skip it if the key is existed
+        all_keys = [int(ssub_key) for par_key in exist_descriptive_tags.keys()
+                    for sub_key in exist_descriptive_tags[par_key].keys() for ssub_key in
+                    exist_descriptive_tags[par_key][sub_key].keys()]
+
+        if len(all_keys) < 1:
+            no_need_description = []
+        else:
+            # if the key is already existed in the descriptive tag list # might not need this part
+            # no_need_description = np.where(np.isin(vlm_cls_key, all_keys))[0]
+
+            # if the tag is already descriptive
+            all_tags = [[sub_key, par_key] for par_key in exist_descriptive_tags.keys() for sub_key in
+                        exist_descriptive_tags[par_key].keys()]
+            sub_tags = np.array(all_tags)[:, 0]
+
+            for idx, (cls_name, cls_key) in enumerate(zip(vlm_cls_input, vlm_cls_key)):
+                if idx not in no_need_description and cls_name in sub_tags:
+                    no_need_description = np.append(no_need_description, idx)
+                    tag_idx = np.where(sub_tags == cls_name)[0]
+                    exist_descriptive_tags[all_tags[tag_idx[0]][1]][sub_tags[tag_idx[0]]][int(vlm_cls_key[idx])] = {}  #
+            self.save_json_from_path(self.descriptive_tag_json, exist_descriptive_tags)  # add new tags
+
+        tg_txt_input = []
+        tag_num = []
+        for idx, (cls_name, cls_num) in enumerate(zip(vlm_cls_input, vlm_cls_input_idx)):
+            if cls_num in idx_to_remove1 or idx in no_need_description:
+                continue
+            tg_txt_input.append(f"tag {cls_num}-{cls_name}")
+            tag_num.append(cls_num)
+        tg_txt_input = ", ".join(tg_txt_input)
+        tg_txt_input = f"Identify the features of only tags : {tg_txt_input}"
+
+        if len(tag_num) < 1:
+            print("No landmarks to create a descriptive tag")
+            tag_api_response = "No new landmark to create a descriptive tag"
+            generated_tags = []
+        else:
+            print(f"frame_num :{frame_num}, Descriptor : {tg_txt_input}")
+            self.tag_generator_api.reset_memory()
+            tag_api_response = self.call_api_with_img(self.tag_generator_api, vlm_img_input, tg_txt_input)
+            generated_tags = self.return_descriptive_tags(tag_api_response, vlm_cls_input, vlm_cls_input_idx,
+                                                          vlm_cls_key, vlm_cls_location)
+
+        self.save_descriptor_response_json(frame_num, self.output_dir, "results1.json",
+                                           self.tag_generator_api.args.system_prompt, tg_txt_input, tag_api_response,
+                                           generated_tags)
+
+    def get_model_output(self):
         if self.frame_num < 1:
             return True
 
@@ -774,139 +1144,146 @@ Step 5.
             print("no landmark")
             return True
 
-
         # copy necessary vars
         frame_num = self.frame_num
         vlm_cls_input_idx = self.vlm_cls_input_idx
         vlm_cls_input = self.vlm_cls_input
         vlm_cls_key = self.vlm_cls_key
         vlm_img_input = self.vlm_img_input.copy()
+        vlm_cls_location = self.vlm_cls_location
 
         print("frame : ", frame_num)
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
-        self.vlm_cls_input = []  # in order to prevent calling vlm repeatedly with the same input
 
-        ##edit a text input
-        txt_input = []
+        # for idx, img in enumerate(vlm_img_input[1:]):
+        #     cv2.imwrite(str(self.output_dir / "{:05d}_input_{:02d}.png".format(frame_num, idx)), img)
+
+        ### without cropped imgs
+        # vlm_img_input = vlm_img_input[0] # without cropped imgs
+        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        ### with cropped imgs
+        cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input[0])  # save an input img
+        ###
+
+        self.vlm_cls_input = []  # reset it, in order to prevent calling vlm repeatedly with the same input
+
+        #### filtering api
+        # edit a text input
+        filter_txt_input = []
         tag_num = []
         for cls_name, cls_num in zip(vlm_cls_input, vlm_cls_input_idx):
-            txt_input.append(f"{cls_name}: {cls_num}")
+            filter_txt_input.append(f"{cls_num}: {cls_name}")
             tag_num.append(cls_num)
-        txt_input = ", ".join(txt_input)
+        filter_txt_input = ", ".join(filter_txt_input)
 
-        #vlm_img_input = vlm_img_input[1:]
-        vlm_img_input = vlm_img_input[0]
-        #txt_input = f"The first image has bounding boxes; the next images are cropped from {tag_num}.\n[given tags] " #+ txt_input
-        #txt_input = f"The first image has bounding boxes; the next images are cropped."  # + txt_input
-        #txt_input = f"The images are cropped from {tag_num}.\n[given tags] "  # + txt_input
-        print(f"{txt_input}")
+        print(f"{filter_txt_input}")
 
-        # save an input img
-        # cv2.imwrite(str(self.output_dir / "{:05d}_input.png".format(frame_num)), vlm_img_input)
+        ## call api for filtering
+        self.tag_filter_api.reset_memory()  # remove memorise
+        str_response1 = self.call_api_with_img(self.tag_filter_api, vlm_img_input, filter_txt_input)
 
-        if not self.compare_promts:
+        items_to_remove1, idx_to_remove1, (incorrect_tags, corrected_tags), (
+            duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
+                                                                             vlm_cls_input_idx)
 
-            self.vlm_filter.reset_memory()  # remove memorise
-            # self.memory_injection(self.vlm_filter) # Add examples of the response I want
+        print(duplicated_tags, precise_tags)
+        # call api to generating descriptive tags
+        asyncio.run(self.tag_generator(frame_num, vlm_img_input,
+                                       vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
+                                       idx_to_remove1))
 
-            str_response1 = self.call_api_with_img(self.vlm_filter, vlm_img_input, txt_input)
+        # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
+        # Creating the dictionary for vlm_cls_input
+        vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
 
-            items_to_remove1, idx_to_remove1 = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
-                                                                               vlm_cls_input_idx)
+        # Update the confusion matrix dynamically
+        for k, (duplicated_tag_group, precise_tag) in enumerate(zip(duplicated_tags, precise_tags)):
 
-            # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
-            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                                  idx_to_remove1]
+            # Get the precise tag value from the dictionary
+            precise_tag_value = vlm_cls_input_dict.get(precise_tag)
 
-            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, str_response1, frame_num,
-                                    items_to_remove1, self.output_dir, "results1.json")
+            # Ensure the precise tag value is unique
+            if precise_tag_value not in self.unique_precise_tags_list:
+                self.unique_precise_tags_list.append(precise_tag_value)
 
-            print("remove - experiment1 : ", items_to_remove1)
+            for duplicated_tag in duplicated_tag_group:
+                # Get the duplicate tag value from the dictionary
+                duplicate_tag_value = vlm_cls_input_dict.get(duplicated_tag)
+                if duplicate_tag_value != precise_tag_value:
+                    self.update_confusion_matrix_for_duplicates(duplicate_tag_value, precise_tag_value)
+                    # Add the duplicate tag to the list
+                    if duplicate_tag_value not in self.duplicate_tags_list:
+                        self.duplicate_tags_list.append(duplicate_tag_value)
+        print("Unique Precise Tags:", self.unique_precise_tags_list)
+        print("Duplicate Tags:", self.duplicate_tags_list)
 
-            # double-check-api
-            # txt_prompt = """let's double check your response."""
-            # print(txt_prompt)
-            # str_response2 = self.call_api(self.vlm_filter, txt_prompt)
-            # items_to_remove2, idx_to_remove2 = self.return_landmarks_to_remove(str_response2, vlm_cls_input,
-            #                                                                  vlm_cls_input_idx)
-            # self.save_response_json(txt_prompt, txt_input, str_response2, frame_num,
-            #                        "out of format", self.output_dir, "results2.json")
+        print("Confusion Matrix duplicate:")
+        for predicted_class, corrections in self.confusion_matrix_for_duplicates.items():
+            print(f"{predicted_class}: {dict(corrections)}")
 
+        # Confusion Matrix duplicate:
+        # fan: {'mechanical fan': 3}
+        # mechanical fan: {'mechanical fan': 3}
+        # toy: {'snowman': 4}
+        # snowman: {'snowman': 4}
+        # racket: {'tennis racket': 1}
+        # tennis racket: {'tennis racket': 1}
 
-        else:  # multi-threading
-            ###
-            from concurrent.futures import ThreadPoolExecutor
-            prompt = """
-cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7
+        # confusion matrix for correct ones
+        # Filtering correct tags by excluding incorrect_tags
+        correct_tags = [idx for idx in vlm_cls_input_idx if idx not in incorrect_tags]
+        # Filtering correct class names based on correct tags
+        correct_cls_input = [cls_name for cls_name, idx in zip(vlm_cls_input, vlm_cls_input_idx) if
+                             idx not in incorrect_tags]
+        print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
 
-Examples of each step's output for the given image and its tags:
-Step 1
-    - Tag 0 (cup): Incorrect.The bounding box contains a ball.
-    - Tag 1 (book): Correct. The bounding box contains a book.
-    - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
-    - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
-    - Tag 7 (hat): Correct. The bounding box contains a hat.
-            
-Step 2
-    - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it. Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
-            
-Step 3
-    - unmatched_tags = [0]
-    - unmatched_tags = [3, 7]
-    
-Step 4
-    - unmatched_tags = [0, 3, 7]
-"""
-            user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
-            assistant_commant = """Step 1
-    - Tag 0 (cup): Incorrect.The bounding box contains a ball.
-    - Tag 1 (book): Correct. The bounding box contains a book.
-    - Tag 3 (baseball hat): Correct. The bounding box contains a baseball hat.
-    - Tag 4 (baseball hat): Correct. The bounding box contains a baseball hat but it's duplicated.  
-    - Tag 7 (hat): Correct. The bounding box contains a hat.
-            
-Step 2
-    - Tag 3,4, and 7 are pointing to one object. Baseball hat is more precise tag than hat since there is LA mark on it. Considering the spatial relationships between the remaining tags, Tag 3 Focuses on a smaller part of the baseball hat, not covering the entire object. Tag 4 The most precise one.
-            
-Step 3
-    - unmatched_tags = [0]
-    - unmatched_tags = [3, 7]
-    
-Step 4
-    - unmatched_tags = [0, 3, 7]"""
+        for correct_tag, original_correct_tag in zip(correct_tags, correct_cls_input):
+            # if the tag has been removed then we don't need to update the confusion matrix
+            if original_correct_tag == 'empty':
+                continue
+            self.update_confusion_matrix(vlm_cls_input_dict.get(correct_tag), original_correct_tag)
+        # print("Confusion Matrix correct ones:")
+        # for predicted_class, corrections in self.confusion_matrix.items():
+        #     print(f"{predicted_class}: {dict(corrections)}")
 
-            self.vlm_filter.reset_memory()
-            self.vlm_filter.reset_with_img(role="system", prompt=prompt,
-                                           img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
-            ###
+        for incorrect_tag, corrected_tag in zip(incorrect_tags, corrected_tags):
+            if corrected_tag == 'empty':
+                continue
+            self.update_confusion_matrix(vlm_cls_input_dict.get(incorrect_tag), corrected_tag)
+            # print(f'vlm_cls_input: {vlm_cls_input_dict} incorrect_tag: {incorrect_tag}')
+            # print(f'vlm_cls_input[incorrect_tags]: {vlm_cls_input_dict.get(incorrect_tag)} corrected_tags: {corrected_tag}')
+        # Print the confusion matrix
+        # print("Confusion Matrix with everything:")
+        # for predicted_class, corrections in self.confusion_matrix.items():
+        #     print(f"{predicted_class}: {dict(corrections)}")
 
-            self.vlm_filter_com.reset_memory()
-            self.vlm_filter_com.reset_with_img(role="user", prompt=user_commant,
-                                               img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
-            self.vlm_filter_com.add_memory_with_prompts(role="assistant", prompt=assistant_commant)
+        # Calculate probabilities
+        # probabilities = self.calculate_probabilities()
+        self.calculate_probabilities()
+        # print("\nProbabilities:")
+        # for predicted_class, corrections in self.probabilities.items():
+        #     for corrected_class, prob in corrections.items():
+        #         print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
-            cond1 = {"vlm_filter": self.vlm_filter, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
-            cond2 = {"vlm_filter": self.vlm_filter_com, "vlm_img_input": vlm_img_input, "txt_input": txt_input}
-            with ThreadPoolExecutor() as executor:
-                experi = executor.submit(self.call_api_with_img, **cond1)
-                compa = executor.submit(self.call_api_with_img, **cond2)
-                exp_response = experi.result()
-                comp_response = compa.result()
+        #### save all results
+        # replace a cls id to a key - landmarks in self.landmark_keys will be deleted
+        self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
+                              idx_to_remove1]
 
-            items_to_remove_exp, idx_to_remove_exp = self.return_landmarks_to_remove(exp_response, vlm_cls_input,
-                                                                                     vlm_cls_input_idx)
-            items_to_remove_com, _ = self.return_landmarks_to_remove(comp_response, vlm_cls_input, vlm_cls_input_idx)
-            # replace a cls id to a key
-            self.landmark_keys = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in
-                                  idx_to_remove_exp]
+        self.save_filter_response_json(frame_num, self.output_dir, "results1.json",
+                                       self.tag_filter_api.args.system_prompt, filter_txt_input,
+                                       str_response1, (items_to_remove1, incorrect_tags, corrected_tags))
 
-            self.save_response_json(self.vlm_filter.args.system_prompt, txt_input, exp_response, frame_num,
-                                    items_to_remove_exp, self.output_dir)
-            self.save_response_json(self.vlm_filter_com.args.system_prompt, txt_input, comp_response, frame_num,
-                                    items_to_remove_com, self.output_com_dir)
+        print("remove: ", items_to_remove1)
 
-            print("remove - experiment : ", items_to_remove_exp)
-            print("remove - comparison : ", items_to_remove_com)
+        if MODIFY_FUNCTION:
+            ## TODO: modify landmark class
+            modify_dic = self.return_landmarks_to_modify(str_response1, vlm_cls_input, vlm_cls_input_idx)
+            print("modify_dic : ", modify_dic)
+            self.landmark_keys_to_modify = [vlm_cls_key[vlm_cls_input_idx.index(int(i))] for i in modify_dic.keys()]
+            print("landmark_keys_to_modify : ", self.landmark_keys_to_modify)
+            self.newclasses_for_landmarks = list(modify_dic.values())  ## need to double check this
+            print("newclasses_for_landmarks : ", self.newclasses_for_landmarks)
 
         return True
 
@@ -935,6 +1312,20 @@ Step 4
             rospy.logerr("Service call failed: %s" % e)
             return False
 
+    ## TODO: Modifylandmark service implementation
+    # this need to change the lm_to_class, etc
+    def call_modify_landmark_service(self, landmark_key, landmark_class):
+        rospy.wait_for_service('modify_landmark')
+        try:
+            modify_landmark = rospy.ServiceProxy('modify_landmark', ModifyLandmark)
+            print(f"landmark_key: {landmark_key}, landmark_class: {landmark_class}")
+            req = ModifyLandmarkRequest(landmark_key=landmark_key, landmark_class=landmark_class)
+            res = modify_landmark(req)
+            return res.success
+        except rospy.ServiceException as e:
+            rospy.logerr("Service call failed: %s" % e)
+            return False
+
 
 if __name__ == "__main__":
     rospy.init_node("landmarks_comparison_and_removal")
@@ -943,9 +1334,28 @@ if __name__ == "__main__":
     while not rospy.is_shutdown():
         detector.get_model_output()
         rospy.loginfo("Calling service to remove landmark keys: %s" % detector.landmark_keys)
+
+        if REMOVE_DUPLICATES:
+            print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
+            for landmark_key in detector.landmark_keys_duplicated:
+                success = detector.call_remove_landmark_service(landmark_key)
+                rospy.loginfo("Service call success (duplicated): %s" % success)
+        detector.landmark_keys_duplicated = []
+
         for landmark_key in detector.landmark_keys:
             success = detector.call_remove_landmark_service(landmark_key)
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
+
+        if MODIFY_FUNCTION:
+            ## TODO: debug this part
+            ## TODO: how to handle the case when detector.landmark_keys overlaps with detector.landmark_keys_to_modify
+            for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
+                print("here=====================================")
+                ## implement dictionary for to have new class name for each landmark_key
+                success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
+                rospy.loginfo("Service call success: %s" % success)
+            detector.landmark_keys_to_modify = []
+            detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(7)  # Simulate processing time 10
+        rospy.sleep(3)  # Simulate processing time 10

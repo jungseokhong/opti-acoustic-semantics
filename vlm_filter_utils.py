@@ -8,30 +8,35 @@ class vision_filter(PrefixProto):
     model: str = "gpt-4o"
     map_google_API: Proto = Proto(env="$MAP_GOOGLE_API_KEY", dtype=str)
     database_dir = None
+    temperature = 1.0
+    max_tokens = 700
     system_prompt = """
    You are an assistant that identifies incorrect tags. You respond according to the given steps.
-   Step 1. Verify that each tag matches the object in its bounding box.
+   Step 1. Verify that each tag matches the object in its bounding box. Use the cropped images for reference.
        example 1:
-       Tag 1 (bag): Correct.
-       Tag 4 (apple): Incorrect. It is a [object name in the bounding box]
-       Tag 6 (ball): Correct
+       Tag 1 (bag): Incorrect. It is empty
+       Tag 4 (apple): Incorrect. It contains <object name>
+       Tag 5 (apple): Correct 
+       Tag 6 (soccer ball): Correct
        Tag 7 (ball): Correct
-   Step 2. Determine if there are multiple tags pointing to the same object and return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
+       Tag 8 (ball): Correct
+       Tag 11 (chair): Incorrect. It contains <object name>  
+       
+   Step 2. Determine if there are multiple tags pointing to the same object among the tags identified as correct in Step 1. Return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
        example 1:
-       Tags [6, 7] are pointing to the same object
+       Tags[6, 7, 8] : ball, soccer ball, ball are visually pointing to the same object, which is a blue ball under the desk . <describe the look of an object>
+   
+   Step 3. If there are multiple tags for one object from the response of Step 2, identify which tag is the most accurate. Choose one most precise tag. 
+       example 1:
+       Tag [6]: object name "soccer ball" is more precise. So, precise_tag = [7]
 
-   Step 3. If there are multiple tags for one object from the response of Step 2, visually identify which tag most accurately covers the entire object. Rank the tags and explain your reasoning.
+   Step 4. Provide lists, <empty | incorrect | corrected | duplicated | precise_tags_in_duplicated>_tags =[], results from Steps 1 and 3. [] if No tag.
        example 1:
-       Tags [the number of multiple tags from Step 2]: [explain your reasoning]. Therefore, precise_tag = [7]
-
-   Step 4. Provide the conclusions of Step1 and Step 3, in the format: unmatched_tags = [ tag number, tag number,...]. Return unmatched_tags = [] if No unmatched tags.
-       example 1:
-       unmatched_tags = [4]
-       unmatched_tags = [6] 
-
-   Step 5. Extract only the list, unmatched_tags = [ tag number, tag number, ... ] from the response of Step 4.   
-       example 1:
-       unmatched_tags = [4, 6]
+       empty_tags = [1]
+       incorrect_tags = [4, 11] 
+       corrected_tags = ['<object name>', '<object name>']
+       duplicated_tags = [(6, 7, 8), ()]
+       precise_tags_in_duplicated = [7] 
    """
 
 #     system_prompt = """

@@ -13,20 +13,38 @@ import rospy
 import torch
 from cv_bridge import CvBridge
 import cv2
-from semanticslam_ros.msg import ObjectsVector, ObjectVector
+from semanticslam_ros.msg import ObjectsVector, ObjectVector, AllClassProbabilities, ClassProbabilities
+from semanticslam_ros.srv import UpdateClasslist, UpdateClasslistResponse, UpdateClasslistRequest
 from sensor_msgs.msg import CameraInfo, Image
 
 from PIL import Image as PILImage
 from sensor_msgs.msg import Image as RosImage
 import sys
+from collections import defaultdict
+import spacy
 
 np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
-EMBEDDING_LEN = 512  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
+EMBEDDING_LEN = 300  # Length of the embedding vector, default is 512
+DETECTOR__CONF_THRESH = 0.4  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
+DETECTOR_VISUALIZATION_THRESHOLD = DETECTOR__CONF_THRESH # visualization threshold for (RAM+DINO)/2
+USE_PROBABILITIES = True  # use probabilities from the service to update class
 
+debug = True  # debugging mode
+debug_frame_num = 0
+debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
+general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
+                              'floor', 'ceiling', 'carpet', 'mat',
+                             'restroom', 'bathroom', 'dressing',
+                             'person', 'child',
+                             'black', 'yellow', 'red', 'blue', 'white', 'waiting room', 'floor mat', 
+                             'lay', 'office building','surface','yoga mat','radio', 'speaker', 'air conditioner',
+                             'tripod', 'stand', 'miniature', 'sit', 'Wii controller', 'mess',
+                             'banana peel', 'stuff', 'pillar', 'concrete', 'cement',
+                             'wall mark', 'wall marks','floor', 'green',
+                             'table', 'office chair'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
     """
@@ -83,6 +101,10 @@ class ClosedSetDetector:
 
         method: Literal["yolo", "ram"] = "ram"
         self.method = method
+        rospy.loginfo("detector started")
+        rospy.loginfo("updateclasslist service started")
+        self.update_classes_service = rospy.Service('/update_classlist', UpdateClasslist, self.handle_update_classes)
+        self.nlp = spacy.load('en_core_web_md')
 
         if method == "ram":
             import sys
@@ -94,6 +116,8 @@ class ClosedSetDetector:
             self.models = load_models()
             self.inference = run_single_image
             self.classes = {}
+            self.classlist =""
+            self.classes_from_list = {}
 
         else:
             from ultralytics import YOLO
@@ -108,6 +132,8 @@ class ClosedSetDetector:
         self.objs_pub = rospy.Publisher("/camera/objects", ObjectsVector, queue_size=10)
         self.img_pub = rospy.Publisher("/camera/yolo_img", RosImage, queue_size=10)
         self.br = CvBridge()
+        self.probabilities_dict = {}
+        self.probabilities = defaultdict(dict)
 
         # Set up synchronized subscriber 
         # REALSENSE PARAMS
@@ -126,18 +152,17 @@ class ClosedSetDetector:
         # )
 
         # JACKAL PARAMS
-        cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/rgb/camera_info")
-        rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/rgb/image_rect_color")
-        depth_topic = rospy.get_param(
-            "depth_topic", "/zed2i/zed_node/depth/depth_registered"
-        )
+        cam_info_topic = rospy.get_param("cam_info_topic", "/zed2i/zed_node/left/camera_info")
+        rgb_topic = rospy.get_param("rgb_topic", "/zed2i/zed_node/left/image_rect_color")
+        depth_topic = rospy.get_param("depth_topic", "/zed2i/zed_node/depth/depth_registered")
+        allclsprobs_topic = rospy.get_param("allclsprobs", "/allclass_probabilities")
+
         self.cam_info_sub = message_filters.Subscriber(
             cam_info_topic, CameraInfo, queue_size=1
         )
         self.rgb_img_sub = message_filters.Subscriber(rgb_topic, Image, queue_size=1)
-        self.depth_img_sub = message_filters.Subscriber(
-            depth_topic, Image, queue_size=1
-        )
+        self.depth_img_sub = message_filters.Subscriber(depth_topic, Image, queue_size=1)
+        self.allclsprobs_sub = rospy.Subscriber(allclsprobs_topic, AllClassProbabilities, self.probability_callback)
 
         # Synchronizer for RGB and depth images
         self.sync = message_filters.ApproximateTimeSynchronizer(
@@ -145,6 +170,41 @@ class ClosedSetDetector:
         )
 
         self.sync.registerCallback(self.forward_pass)
+
+    def probability_callback(self, allcls_probs: AllClassProbabilities):
+        for cls_probs in allcls_probs.classes:
+        # process incoming probability data and update local probabilities dictionary.
+        # self.probabilities_dict[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+            self.probabilities[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+
+
+    def update_classes_from_list(self):
+        """
+        Update self.classes dictionary from the string self.classlist.
+        """
+        # Split the classlist string into a list of class names
+        class_names = self.classlist.split(", ")
+
+        # Convert the list of class names into a dictionary with indices as keys
+        self.classes = {i: class_name for i, class_name in enumerate(class_names)}
+
+        for predicted_class, corrections in self.probabilities.items():
+            for corrected_class, prob in corrections.items():
+                if corrected_class not in self.classes.values():
+                    self.classes[len(self.classes)] = corrected_class
+                    rospy.loginfo(f"Added class: {corrected_class}")
+        rospy.loginfo(f"Classes updated: {self.classes}")
+
+
+    def handle_update_classes(self, req):
+        # Example handler, adjust according to your needs
+        # Assuming req.data is a string containing the new class list
+        self.classlist = req.landmark_class.data
+        rospy.loginfo(f"Updated classes: {self.classlist}")
+
+        # Update self.classes after receiving new classlist
+        self.update_classes_from_list()
+        return UpdateClasslistResponse(success=True)
 
     def forward_pass(self, cam_info: CameraInfo, rgb: Image, depth: Image) -> None:
         """
@@ -190,23 +250,23 @@ class ClosedSetDetector:
             classNames = [
                 "person", "bicycle", "car", "motorcycle", "airplane",
                 "bus", "train", "truck", "boat", "traffic light",
-                "fire hydrant", "stop sign", "parking meter", "benchhhh", "bird",
+                "fire hydrant", "stop sign", "parking meter", "bench", "bird",
                 "cat", "dog", "horse", "sheep", "cow",
                 "elephant", "bear", "zebra", "giraffe", "backpack",
                 "umbrella", "handbag", "tie", "suitcase", "frisbee",
                 "skis", "snowboard", "sports ball", "kite", "baseball bat",
                 "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
-                "wine glass", "cupppp", "fork", "knife", "spoon",
+                "wine glass", "cup", "fork", "knife", "spoon",
                 "bowl", "banana", "apple", "sandwich", "orange",
                 "broccoli", "carrot", "hot dog", "pizza", "donut",
                 "cake", "chair", "couch", "potted plant", "bed",
                 "dining table", "toilet", "tv", "laptop", "mouse",
                 "remote", "keyboard", "cell phone", "microwave", "oven",
-                "toaster", "sink", "refrigerator", "bookkk", "clock",
+                "toaster", "sink", "refrigerator", "book", "clock",
                 "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
             ## once classnames are updated, it can be turned into string
             class_names_string = ", ".join(classNames)
-
+            ram_confs = confs.copy()
         else:  # self.method = "ram"
 
             image_cv = self.br.imgmsg_to_cv2(rgb, desired_encoding="bgr8")
@@ -214,10 +274,18 @@ class ClosedSetDetector:
 
             height, width = image_cv.shape[:2]
             detections, classes, visualization = self.inference(image=image_cv, models=self.models,
-                                                                th_conf=DETECTOR__CONF_THRESH)
+                                                                visualization_threshold=DETECTOR_VISUALIZATION_THRESHOLD)
 
             if len(classes) < 1:
                 return
+            # for cls_probs in allcls_probs.classes:
+            #     # process incoming probability data and update local probabilities dictionary.
+            #     # self.probabilities_dict[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+            #     self.probabilities[cls_probs.predicted_class] = {cls_probs.corrected_classes[i]: cls_probs.probabilities[i] for i in range(len(cls_probs.corrected_classes))}
+
+            for predicted_class, corrections in self.probabilities.items():
+                for corrected_class, prob in corrections.items():
+                    print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
 
             # visualization?
             im = PILImage.fromarray(visualization)
@@ -232,16 +300,38 @@ class ClosedSetDetector:
 
             self.img_pub.publish(msg_yolo_detections)
 
-            masks, bboxes, class_ids, confs = [], [], [], []
-            for xyxy, mask, confidence, class_id, _, _ in detections:
+            #####
+            # save frames with the confidences
+            if debug:
+                global debug_frame_num
+                debug_frame_num += 1
+                out_name = f"{debug_output_path}/frame_{debug_frame_num:04}.png"
+                pathlib.Path(debug_output_path).mkdir(exist_ok=True, parents=True)
+                cv2.imwrite(out_name, visualization)
 
+                out_name = f"{debug_output_path}/confidences.txt"
+                with open(out_name, 'a', encoding='utf-8') as file:
+                    file.write(f"detected : {classes}\n")
+                    file.write("frame_num\tclass_name\tDINO_conf\t\tRAM_conf\t\th_Dino:h_Ram\t\tDinoXRam\n")
+                    for i in range(len(detections.confidence)):
+                        file.write(f"{debug_frame_num}\t{classes[detections.class_id[i]]}\t"
+                                   f"{detections.confidence[i]}\t"
+                                   f"{detections.ram_conf[i]}\t"
+                                   f"{(detections.confidence[i] + detections.ram_conf[i]) / 2}\t"
+                                   f"{detections.confidence[i] * detections.ram_conf[i]}\n")
+                    file.write("\n")
+
+                #print(f"Data saved to {out_name}")
+            #####
+
+            masks, bboxes, class_ids, confs, ram_confs = [], [], [], [], []
+            for i, (xyxy, mask, confidence, class_id, _, _) in enumerate(detections):
+                # print(f'confidence: {confidence}, conf i: {detections.confidence[i]}, ram conf i: {detections.ram_conf[i]}')
                 if class_id is None:
                     continue
 
                 # todo remove this part later
-                if classes[class_id] in ['ceiling', 'floor', 'wall', 'room', 'classroom',
-                                         'window', 'floor', 'ceiling', 'carpet', 'mat', 'restroom', 'bathroom', 'dressing',
-                                         'black', 'yellow', 'red', 'blue', 'white']:  # remove too general classes
+                if classes[class_id] in general_classes_to_remove:  # remove too general classes
                     continue
 
                 bboxes.append(xyxy)
@@ -251,20 +341,80 @@ class ClosedSetDetector:
                     mask[int(xyxy[1]):int(xyxy[3]), int(xyxy[0]):int(xyxy[2])] = 1.0
                 masks.append(mask)
 
-                if classes[class_id] not in self.classes.values():
-                    self.classes[len(self.classes)] = classes[class_id]
+                # if use probabilities from the service to update class
+                conf_prior = (confidence + detections.ram_conf[i]) / 2 ## [TODO]: check if this is the right way to get the confidence
+                if USE_PROBABILITIES:
 
-                new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
+                    # updated_prob = dict()
+                    # updated_prob[classes[class_id]] = conf_prior # once update the confusion matrix, this line should be removed
+                    # corrections = self.probabilities[classes[class_id]]
+                    # for i, (corrected_class, prob) in enumerate(corrections.items()):
+                    #         ## [TODO]: conf_prior/# of different classes?
+                    #     updated_prob[corrected_class] = conf_prior/len(corrections.items()) *prob
+                    # # find the class with the highest probability
+                    # print(f'updated_prob: {updated_prob}')
+                    # updated_class_from_prob = max(updated_prob, key=updated_prob.get)
+                    # print(f'[class change] {classes[class_id]} -> {updated_class_from_prob}')
+
+                        ## This is a correct way of doing probability update when confusion matrix has original class itself. (we don't for now)
+                        # for i, (corrected_class, prob) in enumerate(corrections.items()):
+                        #     if corrected_class == classes[class_id]:
+                        #         updated_prob[corrected_class] = conf_prior*prob
+                        #     else:
+                        #         ## [TODO]: conf_prior/# of different classes?
+                        #         updated_prob[corrected_class] = conf_prior/len(corrections.items()) *prob
+                        #     print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
+
+                    updated_prob = dict()
+                    corrections = self.probabilities[classes[class_id]]
+                    for j, (corrected_class, prob) in enumerate(corrections.items()):
+                        if corrected_class == classes[class_id]:
+                            updated_prob[corrected_class] = conf_prior*prob
+                        else:
+                            ## [TODO]: conf_prior/# of different classes?
+                            updated_prob[corrected_class] = conf_prior/(len(corrections.items())-1) *prob # [TODO]: need to change divider
+                        print(f"P({predicted_class} -> {corrected_class}) = {prob:.2f}")
+
+                    if len(updated_prob) != 0:
+
+                        # find the class with the highest probability
+                        print(f'[updated_prob]: {updated_prob}')
+                        updated_class_from_prob = max(updated_prob, key=updated_prob.get)
+                        print(f'[class change] {classes[class_id]} -> {updated_class_from_prob}')
+
+
+                        if updated_class_from_prob not in self.classes.values():
+                            self.classes[len(self.classes)] = updated_class_from_prob
+
+                        new_cls_id = [key for key, value in self.classes.items() if value == updated_class_from_prob]
+                    else:
+                        if classes[class_id] not in self.classes.values():
+                            self.classes[len(self.classes)] = classes[class_id]
+
+                        new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
+
+                else:
+                    ## subscribe and update self.classes here?
+                    if classes[class_id] not in self.classes.values():
+                        self.classes[len(self.classes)] = classes[class_id]
+
+                    new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
 
                 class_ids.append(new_cls_id[0])
+                print(f'class_ids: {class_ids} new_cls_id: {new_cls_id[0]} class_name: {classes[class_id]} self.classes: {self.classes}')
                 confs.append(confidence)
+                ram_confs.append(detections.ram_conf[i])
 
             print(list(self.classes.values()))
             class_names_string = ", ".join(list(self.classes.values()))
 
-        if len(masks) == 0:
-            return
-        for mask, class_id, bboxes, conf in zip(masks, class_ids, bboxes, confs):
+        # if len(masks) == 0:
+        #     return
+        for mask, class_id, bboxes, dino_conf, ram_conf in zip(masks, class_ids, bboxes, confs, ram_confs):
+
+            #confidence to get =  (dino's conf + ram's conf) / 2
+            conf = (dino_conf + ram_conf) / 2 # [TODO]: check if this is the right way to get the confidence
+
             # ---- Object Vector ----
             object = ObjectVector()
             class_id = int(class_id)
@@ -281,9 +431,9 @@ class ClosedSetDetector:
                 print('inf nan passes')
                 continue
 
-            print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
+            # print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
             print(f'class_id: {class_id} object_name:{self.classes[class_id]} conf: {conf}')
-            print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
+            # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
 
             # Unproject centroid to 3D
             x, y, z = unproject(obj_centroid[1], obj_centroid[0], obj_depth, cam_info)
@@ -306,8 +456,11 @@ class ClosedSetDetector:
             assert class_id < EMBEDDING_LEN, "Class ID > length of vector"
 
             #####todo: might need to change it?
-            object.latent_centroid[class_id] = 1
+            # object.latent_centroid[class_id] = 1
+            object.latent_centroid = self.nlp(str(self.classes[class_id])).vector
             object.class_id = class_id
+            object.det_conf = conf
+            object.ram_conf = ram_conf
 
             # if ((conf < .9) or (np.isnan(obj_depth)) or (np.isnan(obj_centroid[0])) 
             #     or (np.isnan(obj_centroid[1])) or (np.isinf(obj_depth))):
@@ -316,6 +469,17 @@ class ClosedSetDetector:
 
             objects.objects.append(object)
 
+        ## subscibe class_names_string topic and update the class_names_string? If service was called..
+
+        # print(f'classes: {self.classes} classlist: {self.classlist} class_names_string: {class_names_string}') ###
+
+
+        ## update the class_names_string
+        # if self.classlist != "":
+        #     print(f'updating classlist: {self.classlist}')
+        #     class_names_string = self.classlist
+        #     self.classlist = ""
+        
         objects.classlist.data = class_names_string
         self.objs_pub.publish(objects)
 
