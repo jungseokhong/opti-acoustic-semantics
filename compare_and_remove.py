@@ -65,6 +65,7 @@ class Compare2DMapAndImage:
         self.output_dir2 = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output/labels"
         self.output_dir2.mkdir(exist_ok=True, parents=True)
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
+        self.delete_file(self.output_dir / 'class_probabilities.json')
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -204,6 +205,15 @@ class Compare2DMapAndImage:
         allclass_probs.header = rgbimg.header
         allclass_probs.classes = []
 
+        # Prepare a dictionary to store probabilities with ROS time
+        class_probs_dict = {
+            'timestamp': {
+                'secs': allclass_probs.header.stamp.secs,
+                'nsecs': allclass_probs.header.stamp.nsecs
+            },
+            'classes': []
+        }
+
         for predicted_class, corrections in self.probabilities.items():
             classes_prob = ClassProbabilities()
             classes_prob.predicted_class = predicted_class
@@ -212,9 +222,43 @@ class Compare2DMapAndImage:
             allclass_probs.classes.append(classes_prob)
             # print(f'length of allclass_probs.classes: {len(allclass_probs.classes)}')
 
+            # Store the probabilities in the dictionary for JSON storage
+            class_probs_dict['classes'].append({
+                'predicted_class': predicted_class,
+                'corrected_classes': list(corrections.keys()),
+                'probabilities': list(corrections.values())
+            })
+
         # Publish all class probabilities
         self.allclsprobs_pub.publish(allclass_probs)
         # rospy.loginfo(f"Publishing probabilities for all classes")
+
+        # Store the class probabilities in a JSON file with ROS time
+        json_file_path = self.output_dir / 'class_probabilities.json'
+
+
+        # Load existing data if the file exists
+        if os.path.exists(json_file_path):
+            try:
+                with open(json_file_path, 'r') as json_file:
+                    existing_data = json.load(json_file)
+                    if not isinstance(existing_data, list):
+                        existing_data = []  # Ensure the file contains a list
+            except json.JSONDecodeError:
+                existing_data = []  # If the file is corrupted or empty
+        else:
+            existing_data = []  # Initialize as an empty list if file does not exist
+
+        # Append new data to existing data
+        existing_data.append(class_probs_dict)
+
+
+        try:
+            with open(json_file_path, 'w') as json_file:
+                json.dump(class_probs_dict, json_file, indent=4)
+            rospy.loginfo(f"Class probabilities saved to {json_file_path}")
+        except IOError as e:
+            rospy.logerr(f"Failed to write class probabilities to JSON file: {e}")
 
     def parse_data(self, map_info):
 
