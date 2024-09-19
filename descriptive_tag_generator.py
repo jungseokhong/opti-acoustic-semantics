@@ -20,7 +20,7 @@ Example:
  tag 0 1. brown color, 2. rectangle shape, 3. brown color, with a handle 
   
 
-Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create seperate tags for each and repeat <tag_0>.
+Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each and repeat <tag_0>.
 Use the format: tag_<tag_number> = [].
 Example:
  tag_0 = ['green <object>', 'rectangular shape <object>', 'green <object> with a handle']
