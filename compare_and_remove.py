@@ -272,7 +272,7 @@ class Compare2DMapAndImage:
         try:
             with open(json_file_path, 'w') as json_file:
                 json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
-            rospy.loginfo(f"Class probabilities saved to {json_file_path}")
+            # rospy.loginfo(f"Class probabilities saved to {json_file_path}")
         except IOError as e:
             rospy.logerr(f"Failed to write class probabilities to JSON file: {e}")
 
@@ -693,7 +693,7 @@ class Compare2DMapAndImage:
                         try:
                             with open(json_file_path, 'w') as json_file:
                                 json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
-                            rospy.loginfo(f"Class duplicates saved to {json_file_path}")
+                            # rospy.loginfo(f"Class duplicates saved to {json_file_path}")
                         except IOError as e:
                             rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
 
@@ -748,7 +748,7 @@ class Compare2DMapAndImage:
         return projected_image
 
 
-    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25, cropped_imgs=False):
+    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25):
         tag_area = []  # To determine if tags are overlapping
         image_height, image_width = projected_image.shape[:2]  # Get image dimensions
 
@@ -766,55 +766,26 @@ class Compare2DMapAndImage:
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
 
             pre_projected = projected_image.copy()
-            #cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx, brp_y), color, -1)  # Tag
-            #tag_x_padding = 0 if (brx - tlp_x) > text_size[0] + 10 else  text_size[0] + 5 - (brx - tlp_x)  #txt box padding
             tag_x_padding = text_size[0] + 5 - (brx - tlp_x)
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1)
 
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1) # tag box
             cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # Bounding box
 
-            # Draw a circle at the center of the bounding box
-            # center_x = int((tlx + brx) / 2)
-            # center_y = int((tly + bry) / 2)
-            # cv2.circle(projected_image, (center_x, center_y), 5, color, -1)  # Center circle
-
-            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected) # overlay
 
             # Draw the dashed rectangle around the bounding box
             self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, 1)  # tag box
 
-        # Now place the labels and draw dashed lines
-        # for idx, (single_obj, ((tlx, tly), (brx, bry))) in enumerate(zip(obj, bounding_boxes)):
-            # Determine the label position on the right side (top-right corner of the image)
-
-            # label_x = image_width - text_size[0] - 10
-            # label_y = label_y_offset + text_size[1]
-            label_x = tlx + 5
-            label_y = tly + 20
+            label_x = tlp_x + 1
+            label_y = tlp_y + 20
             letters.append((label_text, label_x, label_y))
 
-            # Increase the offset for the next label to avoid overlap
-            label_y_offset += text_size[1] + 20  # 20-pixel vertical space between labels
-
-            # Draw a semi-transparent white box behind the text
-            box_padding = 5
-            box_tl = (label_x - box_padding, label_y - text_size[1] - box_padding)
-            box_br = (label_x + text_size[0] + box_padding, label_y + box_padding)
-            #cv2.rectangle(projected_image, box_tl, box_br, (255, 255, 255), -1)  # White box
-
-            cv2.addWeighted(projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.4, 
-                            projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]], 0.6, 0, 
-                            projected_image[box_tl[1]:box_br[1], box_tl[0]:box_br[0]])  # More transparent white box
-
-            # Draw the label text over the semi-transparent box
-            #cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX , 0.65, (0, 0, 0), 1, cv2.LINE_AA)
-
-            # Draw a dashed line from each bounding box center to its respective label
-            # center_x = int((tlx + brx) / 2)
-            # center_y = int((tly + bry) / 2)
-            # self.draw_dashed_line(projected_image, (center_x, center_y), (label_x, label_y - text_size[1] // 2), color, dash_length=5)
-
-        [ cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX , 0.65, (0, 0, 0), 1, cv2.LINE_AA) for (label_text, label_x, label_y) in letters]
+        for (label_text, label_x, label_y) in letters:
+            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 3,
+                        cv2.LINE_AA)
+            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1,
+                        cv2.LINE_AA)
 
         # Save the final image
         output_path = self.output_dir2 / "{:05d}_landmarklabel.png".format(self.frame_num)
@@ -1009,7 +980,7 @@ class Compare2DMapAndImage:
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
         projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
                                                       projected_image2, bbox_wo_padding,
-                                               obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25, cropped_imgs=True)
+                                               obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -1624,4 +1595,4 @@ if __name__ == "__main__":
             detector.landmark_keys_to_modify = []
             detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(3)  # Simulate processing time 10
+        rospy.sleep(10)  # Simulate processing time 10
