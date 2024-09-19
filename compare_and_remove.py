@@ -62,7 +62,26 @@ class Compare2DMapAndImage:
 
         self.save_projections = True
         self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
+        self.output_dir2 = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output/labels"
+
+        # Create the output directories if they don't exist
+        try:
+            if not self.output_dir.exists():
+                rospy.loginfo(f"Creating directory: {self.output_dir}")
+            self.output_dir.mkdir(exist_ok=True, parents=True)
+            
+            if not self.output_dir2.exists():
+                rospy.loginfo(f"Creating directory: {self.output_dir2}")
+            self.output_dir2.mkdir(exist_ok=True, parents=True)
+            
+        except Exception as e:
+            rospy.logerr(f"Failed to create directories: {e}")
+
+
+        # self.output_dir.mkdir(exist_ok=True, parents=True)
+        # self.output_dir2.mkdir(exist_ok=True, parents=True)
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
+        self.delete_file(self.output_dir / 'class_probabilities.json')
 
         rospy.loginfo("compare_map_img service started")
         self.K = np.zeros((3, 3))
@@ -178,7 +197,7 @@ class Compare2DMapAndImage:
         projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points,
                                                                      landmark_classes,
                                                                      landmark_widths, landmark_heights, landmark_keys,
-                                                                     img=rgbimg_cv)
+                                                                     yoloimg_cv, rgbimg.header, img=rgbimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -202,6 +221,15 @@ class Compare2DMapAndImage:
         allclass_probs.header = rgbimg.header
         allclass_probs.classes = []
 
+        # Prepare a dictionary to store probabilities with ROS time
+        class_probs_dict = {
+            'timestamp': {
+                'secs': allclass_probs.header.stamp.secs,
+                'nsecs': allclass_probs.header.stamp.nsecs
+            },
+            'classes': []
+        }
+
         for predicted_class, corrections in self.probabilities.items():
             classes_prob = ClassProbabilities()
             classes_prob.predicted_class = predicted_class
@@ -210,9 +238,43 @@ class Compare2DMapAndImage:
             allclass_probs.classes.append(classes_prob)
             # print(f'length of allclass_probs.classes: {len(allclass_probs.classes)}')
 
+            # Store the probabilities in the dictionary for JSON storage
+            class_probs_dict['classes'].append({
+                'predicted_class': predicted_class,
+                'corrected_classes': list(corrections.keys()),
+                'probabilities': list(corrections.values())
+            })
+
         # Publish all class probabilities
         self.allclsprobs_pub.publish(allclass_probs)
         # rospy.loginfo(f"Publishing probabilities for all classes")
+
+        # Store the class probabilities in a JSON file with ROS time
+        json_file_path = self.output_dir / 'class_probabilities.json'
+
+
+        # Load existing data if the file exists
+        if os.path.exists(json_file_path):
+            try:
+                with open(json_file_path, 'r') as json_file:
+                    existing_data = json.load(json_file)
+                    if not isinstance(existing_data, list):
+                        existing_data = []  # Ensure the file contains a list
+            except json.JSONDecodeError:
+                existing_data = []  # If the file is corrupted or empty
+        else:
+            existing_data = []  # Initialize as an empty list if file does not exist
+
+        # Append new data to existing data
+        existing_data.append(class_probs_dict)
+
+        # Write the updated existing data (which now contains all the appended probabilities) back to the file
+        try:
+            with open(json_file_path, 'w') as json_file:
+                json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
+            # rospy.loginfo(f"Class probabilities saved to {json_file_path}")
+        except IOError as e:
+            rospy.logerr(f"Failed to write class probabilities to JSON file: {e}")
 
     def parse_data(self, map_info):
 
@@ -479,7 +541,8 @@ class Compare2DMapAndImage:
 
                 cv2.rectangle(projected_image, tag_tl, tag_br, color, 1)  # tag
                 # cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 1)
-                self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+                if landmark_classes[i] != "none":
+                    self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
 
                 # tag_name = f"[{i}]"
                 # cv2.putText(projected_image, tag_name, (tag_tl[0], tag_br[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -547,7 +610,7 @@ class Compare2DMapAndImage:
             del depths[idx]
             del obj[idx]
 
-    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list):
+    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list, msg_header):
         overlapping_indices = []
 
         for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
@@ -592,6 +655,48 @@ class Compare2DMapAndImage:
                         overlapping_indices.append(i + j + 1)
                         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
                         print(f"Duplicate tag found: {class2_label} will be removed due to {class1_label}")
+                        class_duplicates_dict = {
+                            'timestamp': {
+                                'secs': msg_header.stamp.secs,
+                                'nsecs': msg_header.stamp.nsecs
+                            },
+                            'classes': []
+                        }
+                        for predicted_class, precise_corrections in self.confusion_matrix_for_duplicates.items():
+                            # Store the probabilities in the dictionary for JSON storage
+                            class_duplicates_dict['classes'].append({
+                                'predicted_class': predicted_class,
+                                'precise_classes': list(precise_corrections.keys()),
+                                'count': list(precise_corrections.values())
+                            })
+
+                        # Store the class probabilities in a JSON file with ROS time
+                        json_file_path = self.output_dir / 'class_duplicates.json'
+
+
+                        # Load existing data if the file exists
+                        if os.path.exists(json_file_path):
+                            try:
+                                with open(json_file_path, 'r') as json_file:
+                                    existing_data = json.load(json_file)
+                                    if not isinstance(existing_data, list):
+                                        existing_data = []  # Ensure the file contains a list
+                            except json.JSONDecodeError:
+                                existing_data = []  # If the file is corrupted or empty
+                        else:
+                            existing_data = []  # Initialize as an empty list if file does not exist
+
+                        # Append new data to existing data
+                        existing_data.append(class_duplicates_dict)
+
+                        # Write the updated existing data (which now contains all the appended probabilities) back to the file
+                        try:
+                            with open(json_file_path, 'w') as json_file:
+                                json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
+                            # rospy.loginfo(f"Class duplicates saved to {json_file_path}")
+                        except IOError as e:
+                            rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
+
 
         # Remove duplicates and reverse the list to safely delete without affecting indices
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
@@ -603,7 +708,10 @@ class Compare2DMapAndImage:
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
                         class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
         tag_area = []  # To determine if tags  are overlapping
-        for ((tlx, tly), (brx, bry)), color in zip(bounding_boxes, class_to_color.values()):
+        for single_obj, ((tlx, tly), (brx, bry)), color in zip(obj, bounding_boxes, class_to_color.values()):
+            if single_obj['label']=="none":
+                continue
+
             # get tag_box positions
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
 
@@ -618,11 +726,15 @@ class Compare2DMapAndImage:
 
         # print text on the image
         for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
+            if single_obj['label']=="none":
+                continue
             tag_name = f"[{single_obj['i']}]"
             cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
                         (0, 0, 0), 1, cv2.LINE_AA)
 
             if cropped_imgs:
+                if single_obj['label']=="none":
+                    continue
                 pre_projected = self.vlm_img_input[idx + 1].copy()
                 add_w = int(tag_box_size // 1.3)
                 cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
@@ -635,10 +747,112 @@ class Compare2DMapAndImage:
 
         return projected_image
 
+
+    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25):
+        tag_area = []  # To determine if tags are overlapping
+        image_height, image_width = projected_image.shape[:2]  # Get image dimensions
+
+        # To track the next available position for the label on the right side
+        label_y_offset = 20  # Starting y-coordinate for the first label from the top right corner
+        letters = []
+        for ((tlx, tly), (brx, bry)), single_obj, color in zip(bounding_boxes, obj, class_to_color.values()):
+            if single_obj['label']=="none":
+                continue
+
+            label_text = single_obj['label']
+            text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_TRIPLEX, 0.65, 1)[0]
+
+            # Get tag_box positions
+            (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
+
+            pre_projected = projected_image.copy()
+            tag_x_padding = text_size[0] + 5 - (brx - tlp_x)
+
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1) # tag box
+            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # Bounding box
+
+            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected) # overlay
+
+            # Draw the dashed rectangle around the bounding box
+            self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, 1)  # tag box
+
+            label_x = tlp_x + 1
+            label_y = tlp_y + 20
+            letters.append((label_text, label_x, label_y))
+
+        for (label_text, label_x, label_y) in letters:
+            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 3,
+                        cv2.LINE_AA)
+            cv2.putText(projected_image, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 1,
+                        cv2.LINE_AA)
+
+        # Save the final image
+        output_path = self.output_dir2 / "{:05d}_landmarklabel.png".format(self.frame_num)
+        cv2.imwrite(str(output_path), projected_image)
+        output_path = self.output_dir2 / "{:05d}_groundingdino.png".format(self.frame_num)
+        cv2.imwrite(str(output_path), yolo_img)
+
+
+        # Convert NumPy arrays to lists for JSON serialization
+        frame_data = {
+            'frame_num': self.frame_num,
+            'timestamp': {
+                'secs': msg_header.stamp.secs,
+                'nsecs': msg_header.stamp.nsecs},
+            'position': position.tolist(),  # Convert to list
+            'rotation_matrix': rotation_matrix.tolist(),  # Convert to list
+            'landmark_points': [point.tolist() for point in landmark_points],  # Convert each point to list
+            'landmark_classes': landmark_classes.tolist()
+        }
+
+        # Path for the JSON file
+        json_path = os.path.join(self.output_dir2, 'landmarks.json')
+
+        # Load the JSON file safely with error handling for corruption or empty file
+        try:
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+            else:
+                data = []
+        except (json.decoder.JSONDecodeError, ValueError) as e:
+            # If the file is corrupted or empty, reset to an empty list
+            print(f"Error reading JSON file {json_path}: {e}. Initializing new JSON data.")
+            data = []
+
+        # Append the current frame's data to the list
+        data.append(frame_data)
+
+        # Write updated data back to the JSON file
+        with open(json_path, 'w') as f:
+            json.dump(data, f, indent=4)
+
+        return projected_image
+
+    # Additional helper function for drawing dashed lines
+    def draw_dashed_line(self, image, start_point, end_point, color, dash_length=5):
+        # Calculate distance and direction between points
+        x1, y1 = start_point
+        x2, y2 = end_point
+        dist = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        dashes = int(dist / dash_length)
+        for i in range(dashes):
+            pt1 = (
+                int(x1 + i / dashes * (x2 - x1)),
+                int(y1 + i / dashes * (y2 - y1))
+            )
+            pt2 = (
+                int(x1 + (i + 0.5) / dashes * (x2 - x1)),
+                int(y1 + (i + 0.5) / dashes * (y2 - y1))
+            )
+            cv2.line(image, pt1, pt2, color, 1)
+
+
     def projectLandmarksToImage_removeoverlap(self, position, orientation,
                                               landmark_points, landmark_classes,
                                               landmark_widths, landmark_heights, landmark_keys,
-                                              img=None):
+                                              yolo_img, msg_header, img=None):
         # Quaternion to rotation matrix conversion
         q = orientation
 
@@ -699,6 +913,7 @@ class Compare2DMapAndImage:
         obj = []
         tag_area = []
         bounding_boxes = []
+        bbox_wo_padding = []
         depths = []
 
         self.vlm_img_input = []
@@ -734,22 +949,38 @@ class Compare2DMapAndImage:
                 bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height \
                     else self.img_height - 2
 
+                #get valid bbox wo padding
+                tlx_wo = (x - scaled_width // 2) if (x - scaled_width // 2)  >= 0 else 1
+                tly_wo = (y - scaled_height // 2)  if (y - scaled_height // 2)  >= 0 else 1
+                brx_wo = (x + scaled_width // 2)  if (x + scaled_width // 2)  < self.img_width \
+                    else self.img_width - 2
+                bry_wo = (y + scaled_height // 2)  if (y + scaled_height // 2)  < self.img_height \
+                    else self.img_height - 2
+
                 ##add cropped images
                 self.vlm_img_input.append(img[tly:bry, tlx:brx].copy())
 
                 bounding_boxes.append(((tlx, tly), (brx, bry)))
+                bbox_wo_padding.append(((tlx_wo, tly_wo), (brx_wo, bry_wo)))
                 depths.append(Z)
 
                 # save inf
                 obj_dic = {"label": landmark_classes[i],
                            "x": x, "y": y, "z": Z, "i": i,
-                           "landmark_key": str(landmark_key)}
+                           "landmark_key": str(landmark_key),
+                           "bbox": [tlx, tly, brx, bry],
+                           "bbox_wo_padding" : [tlx_wo, tly_wo, brx_wo, bry_wo]
+                           }
                 obj.append(obj_dic)
 
         self.removeoverlap(bounding_boxes, depths, obj)
-        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list)
+        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list, msg_header)
+        projected_image2 = projected_image.copy()
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
+        projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
+                                                      projected_image2, bbox_wo_padding,
+                                               obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -762,14 +993,15 @@ class Compare2DMapAndImage:
             # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
 
-            self.save_img(img, projected_image)
+            self.save_img(img, projected_image)#, projected_image_label)
+
             self.save_json(json_out, self.output_dir)
 
         # self.vlm_img_input = projected_image
         self.vlm_img_input[0] = projected_image
         return projected_image
 
-    def save_img(self, img, projected_image):
+    def save_img(self, img, projected_image, additional=None):
         output_path = self.output_dir  # / time_string
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -778,6 +1010,10 @@ class Compare2DMapAndImage:
 
         _output_path = output_path / "{:05d}_proj.png".format(self.frame_num)
         cv2.imwrite(str(_output_path), projected_image)
+
+        if additional is not None:
+            _output_path = output_path / "{:05d}_proj_wopad.png".format(self.frame_num)
+            cv2.imwrite(str(_output_path), additional)
 
     def save_json(self, json_out, output_dir):
         json_path = json_out["image_idx"][:-4] + ".json"
@@ -914,22 +1150,28 @@ class Compare2DMapAndImage:
         parts = str_response.split('tag_')
 
         for part in parts[1:]:
-            part = part.replace("*", " ")
-            tag_list = part.split('=')
+            part = part.replace("*", "")
+            part = part.replace(":", "")
+            part = part.replace("=", "")
+            part = part.replace("-", "")
+            tag_list = part.split('[')
             cls_idx = int(tag_list[0].strip())
-            tag_list = tag_list[1].split('\']')[0] + '\']'
-            try:
-                base = np.where(np.isin(cls_idc, cls_idx))[0][0]
-                tag_list = literal_eval(tag_list.strip())
 
-                cls_matched_descriptive_tags.append(cls_names[base])
-                cls_idx_matched_descriptive_tags.append(tag_list)
-                cls_key_matched_descriptive_tags.append(cls_keys[base])
-                cls_key_matched_locations.append(cls_locations[base])
-                print("generated tags:", tag_list)
+            for single in tag_list[1:]:
+                tag_list =  '[' + single.split('\']')[0] + '\']'
 
-            except:
-                print(f"\nerror during extract the result list..{part}\n")
+                try:
+                    base = np.where(np.isin(cls_idc, cls_idx))[0][0]
+                    tag_list = literal_eval(tag_list.strip())
+
+                    cls_matched_descriptive_tags.append(cls_names[base])
+                    cls_idx_matched_descriptive_tags.append(tag_list)
+                    cls_key_matched_descriptive_tags.append(cls_keys[base])
+                    cls_key_matched_locations.append(cls_locations[base])
+                    print("generated tags:", tag_list)
+
+                except:
+                    print(f"\nerror during extract the result list..{part}\n")
 
         if len(cls_matched_descriptive_tags) < 1:
             return []
@@ -1186,7 +1428,6 @@ class Compare2DMapAndImage:
             duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                              vlm_cls_input_idx)
 
-        print(duplicated_tags, precise_tags)
         # call api to generating descriptive tags
         asyncio.run(self.tag_generator(frame_num, vlm_img_input,
                                        vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
@@ -1347,15 +1588,16 @@ if __name__ == "__main__":
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
 
+        # if True:
         if MODIFY_FUNCTION:
             ## TODO: debug this part
             ## TODO: how to handle the case when detector.landmark_keys overlaps with detector.landmark_keys_to_modify
-            for i, landmark_key in enumerate(detector.landmark_keys_to_modify):
+            for i, landmark_key in enumerate(detector.landmark_keys):
                 print("here=====================================")
                 ## implement dictionary for to have new class name for each landmark_key
-                success = detector.call_modify_landmark_service(landmark_key, detector.newclasses_for_landmarks[i])
+                success = detector.call_modify_landmark_service(landmark_key, "none")
                 rospy.loginfo("Service call success: %s" % success)
             detector.landmark_keys_to_modify = []
             detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(3)  # Simulate processing time 10
+        rospy.sleep(10)  # Simulate processing time 10

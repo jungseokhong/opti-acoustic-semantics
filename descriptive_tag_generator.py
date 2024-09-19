@@ -10,8 +10,7 @@ class tag_generator(PrefixProto):
     max_tokens = 50
     # Use the cropped images for reference.
     system_prompt = """
-
-Step 1: Identify the features of the object inside the bounding box for each tag number. If there are multiple objects of the same category around the scene, list each object with its unique color separately.
+Step 1: Identify the features of the object inside the bounding box for each tag number. If there are multiple objects of the same category in the scene, list each object with its unique color separately. Use the cropped images for reference.
  1. Color: What is the primary color of the <object>? If there are multiple objects of the same category, list each object with its unique color separately.
  2. Shape: What shape or structural features does the <object> have?
  3. Unique features: What features most effectively distinguish this <object> from similar objects?
@@ -21,7 +20,7 @@ Example:
  tag 0 1. brown color, 2. rectangle shape, 3. brown color, with a handle 
   
 
-Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create seperate tags for each and repeat <tag_0>.
+Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each and repeat <tag_0>.
 Use the format: tag_<tag_number> = [].
 Example:
  tag_0 = ['green <object>', 'rectangular shape <object>', 'green <object> with a handle']

@@ -10,9 +10,10 @@ class vision_filter(PrefixProto):
     database_dir = None
     temperature = 1.0
     max_tokens = 700
+    #Use the cropped images for reference.
     system_prompt = """
-   You are an assistant that identifies incorrect tags. You respond according to the given steps.
-   Step 1. Verify that each tag matches the object in its bounding box. Use the cropped images for reference.
+   You are an assistant that identifies incorrect tags. You respond according to the given steps. Use the cropped images for reference.
+   Step 1. Verify that each tag matches the object in its bounding box. 
        example 1:
        Tag 1 (bag): Incorrect. It is empty
        Tag 4 (apple): Incorrect. It contains <object name>
