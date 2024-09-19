@@ -63,7 +63,23 @@ class Compare2DMapAndImage:
         self.save_projections = True
         self.output_dir = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output"
         self.output_dir2 = Path(os.environ['DATASETS']) / "llm_data/llm_filter_output/labels"
-        self.output_dir2.mkdir(exist_ok=True, parents=True)
+
+        # Create the output directories if they don't exist
+        try:
+            if not self.output_dir.exists():
+                rospy.loginfo(f"Creating directory: {self.output_dir}")
+            self.output_dir.mkdir(exist_ok=True, parents=True)
+            
+            if not self.output_dir2.exists():
+                rospy.loginfo(f"Creating directory: {self.output_dir2}")
+            self.output_dir2.mkdir(exist_ok=True, parents=True)
+            
+        except Exception as e:
+            rospy.logerr(f"Failed to create directories: {e}")
+
+
+        # self.output_dir.mkdir(exist_ok=True, parents=True)
+        # self.output_dir2.mkdir(exist_ok=True, parents=True)
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
         self.delete_file(self.output_dir / 'class_probabilities.json')
 
@@ -181,7 +197,7 @@ class Compare2DMapAndImage:
         projected_image = self.projectLandmarksToImage_removeoverlap(position, orientation, landmark_points,
                                                                      landmark_classes,
                                                                      landmark_widths, landmark_heights, landmark_keys,
-                                                                     yoloimg_cv, img=rgbimg_cv)
+                                                                     yoloimg_cv, rgbimg.header, img=rgbimg_cv)
 
         # Combine yoloimg_cv and projected_image side by side
         # if we want to display the images side by side
@@ -252,10 +268,10 @@ class Compare2DMapAndImage:
         # Append new data to existing data
         existing_data.append(class_probs_dict)
 
-
+        # Write the updated existing data (which now contains all the appended probabilities) back to the file
         try:
             with open(json_file_path, 'w') as json_file:
-                json.dump(class_probs_dict, json_file, indent=4)
+                json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
             rospy.loginfo(f"Class probabilities saved to {json_file_path}")
         except IOError as e:
             rospy.logerr(f"Failed to write class probabilities to JSON file: {e}")
@@ -594,7 +610,7 @@ class Compare2DMapAndImage:
             del depths[idx]
             del obj[idx]
 
-    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list):
+    def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list, msg_header):
         overlapping_indices = []
 
         for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
@@ -639,6 +655,48 @@ class Compare2DMapAndImage:
                         overlapping_indices.append(i + j + 1)
                         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
                         print(f"Duplicate tag found: {class2_label} will be removed due to {class1_label}")
+                        class_duplicates_dict = {
+                            'timestamp': {
+                                'secs': msg_header.stamp.secs,
+                                'nsecs': msg_header.stamp.nsecs
+                            },
+                            'classes': []
+                        }
+                        for predicted_class, precise_corrections in self.confusion_matrix_for_duplicates.items():
+                            # Store the probabilities in the dictionary for JSON storage
+                            class_duplicates_dict['classes'].append({
+                                'predicted_class': predicted_class,
+                                'precise_classes': list(precise_corrections.keys()),
+                                'count': list(precise_corrections.values())
+                            })
+
+                        # Store the class probabilities in a JSON file with ROS time
+                        json_file_path = self.output_dir / 'class_duplicates.json'
+
+
+                        # Load existing data if the file exists
+                        if os.path.exists(json_file_path):
+                            try:
+                                with open(json_file_path, 'r') as json_file:
+                                    existing_data = json.load(json_file)
+                                    if not isinstance(existing_data, list):
+                                        existing_data = []  # Ensure the file contains a list
+                            except json.JSONDecodeError:
+                                existing_data = []  # If the file is corrupted or empty
+                        else:
+                            existing_data = []  # Initialize as an empty list if file does not exist
+
+                        # Append new data to existing data
+                        existing_data.append(class_duplicates_dict)
+
+                        # Write the updated existing data (which now contains all the appended probabilities) back to the file
+                        try:
+                            with open(json_file_path, 'w') as json_file:
+                                json.dump(existing_data, json_file, indent=4)  # Write the entire list of data
+                            rospy.loginfo(f"Class duplicates saved to {json_file_path}")
+                        except IOError as e:
+                            rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
+
 
         # Remove duplicates and reverse the list to safely delete without affecting indices
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
@@ -690,7 +748,7 @@ class Compare2DMapAndImage:
         return projected_image
 
 
-    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
+    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25, cropped_imgs=False):
         tag_area = []  # To determine if tags are overlapping
         image_height, image_width = projected_image.shape[:2]  # Get image dimensions
 
@@ -768,6 +826,9 @@ class Compare2DMapAndImage:
         # Convert NumPy arrays to lists for JSON serialization
         frame_data = {
             'frame_num': self.frame_num,
+            'timestamp': {
+                'secs': msg_header.stamp.secs,
+                'nsecs': msg_header.stamp.nsecs},
             'position': position.tolist(),  # Convert to list
             'rotation_matrix': rotation_matrix.tolist(),  # Convert to list
             'landmark_points': [point.tolist() for point in landmark_points],  # Convert each point to list
@@ -820,7 +881,7 @@ class Compare2DMapAndImage:
     def projectLandmarksToImage_removeoverlap(self, position, orientation,
                                               landmark_points, landmark_classes,
                                               landmark_widths, landmark_heights, landmark_keys,
-                                              yolo_img, img=None):
+                                              yolo_img, msg_header, img=None):
         # Quaternion to rotation matrix conversion
         q = orientation
 
@@ -942,13 +1003,13 @@ class Compare2DMapAndImage:
                 obj.append(obj_dic)
 
         self.removeoverlap(bounding_boxes, depths, obj)
-        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list)
+        self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list, msg_header)
         projected_image2 = projected_image.copy()
         projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
                                                obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
         projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
                                                       projected_image2, bbox_wo_padding,
-                                               obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
+                                               obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25, cropped_imgs=True)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
