@@ -396,7 +396,7 @@ class ClosedSetDetector:
                     new_cls_id = [key for key, value in self.classes.items() if value == classes[class_id]]
 
                 class_ids.append(new_cls_id[0])
-                print(f'class_ids: {class_ids} new_cls_id: {new_cls_id[0]} class_name: {classes[class_id]} self.classes: {self.classes}')
+                #print(f'class_ids: {class_ids} new_cls_id: {new_cls_id[0]} class_name: {classes[class_id]} self.classes: {self.classes}')
                 confs.append(confidence)
                 ram_confs.append(detections.ram_conf[i])
 
@@ -427,7 +427,7 @@ class ClosedSetDetector:
                 continue
 
             # print(f'mask shape: {np.shape(mask)} depth shape: {np.shape(depth_m)}')
-            print(f'class_id: {class_id} object_name:{self.classes[class_id]} conf: {conf}')
+            #print(f'class_id: {class_id} object_name:{self.classes[class_id]} conf: {conf}')
             # print(f'obj_depth: {obj_depth} obj_centroid: {obj_centroid}')
 
             # Unproject centroid to 3D

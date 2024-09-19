@@ -1150,22 +1150,28 @@ class Compare2DMapAndImage:
         parts = str_response.split('tag_')
 
         for part in parts[1:]:
-            part = part.replace("*", " ")
-            tag_list = part.split('=')
+            part = part.replace("*", "")
+            part = part.replace(":", "")
+            part = part.replace("=", "")
+            part = part.replace("-", "")
+            tag_list = part.split('[')
             cls_idx = int(tag_list[0].strip())
-            tag_list = tag_list[1].split('\']')[0] + '\']'
-            try:
-                base = np.where(np.isin(cls_idc, cls_idx))[0][0]
-                tag_list = literal_eval(tag_list.strip())
 
-                cls_matched_descriptive_tags.append(cls_names[base])
-                cls_idx_matched_descriptive_tags.append(tag_list)
-                cls_key_matched_descriptive_tags.append(cls_keys[base])
-                cls_key_matched_locations.append(cls_locations[base])
-                print("generated tags:", tag_list)
+            for single in tag_list[1:]:
+                tag_list =  '[' + single.split('\']')[0] + '\']'
 
-            except:
-                print(f"\nerror during extract the result list..{part}\n")
+                try:
+                    base = np.where(np.isin(cls_idc, cls_idx))[0][0]
+                    tag_list = literal_eval(tag_list.strip())
+
+                    cls_matched_descriptive_tags.append(cls_names[base])
+                    cls_idx_matched_descriptive_tags.append(tag_list)
+                    cls_key_matched_descriptive_tags.append(cls_keys[base])
+                    cls_key_matched_locations.append(cls_locations[base])
+                    print("generated tags:", tag_list)
+
+                except:
+                    print(f"\nerror during extract the result list..{part}\n")
 
         if len(cls_matched_descriptive_tags) < 1:
             return []
@@ -1422,7 +1428,6 @@ class Compare2DMapAndImage:
             duplicated_tags, precise_tags) = self.return_landmarks_to_remove(str_response1, vlm_cls_input,
                                                                              vlm_cls_input_idx)
 
-        print(duplicated_tags, precise_tags)
         # call api to generating descriptive tags
         asyncio.run(self.tag_generator(frame_num, vlm_img_input,
                                        vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
