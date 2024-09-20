@@ -19,13 +19,11 @@ Example:
  Tag 0 1. green, 2. rectangle shape 3. green, with dot pattern
  tag 0 1. brown color, 2. rectangle shape, 3. brown color, with a handle 
   
-
-Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each and repeat <tag_0>.
-Use the format: tag_<tag_number> = [].
+Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each. Use the format: tag_<tag_number> = ['<color> <object>', '<shape> <object>', '<unique features> <object>' ]
 Example:
  tag_0 = ['green <object>', 'rectangular shape <object>', 'green <object> with a handle']
  tag_0 = ['brown <object>', 'rectangular shape <object>', 'brown <object> with a handle']
- tag_<tag_number> = [...]
+ 
 """
 #Step 1: What are the main features that distinguish this object from other objects in the same class <object>?
 #     system_prompt = """
