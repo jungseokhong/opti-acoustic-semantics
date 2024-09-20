@@ -1150,12 +1150,14 @@ class Compare2DMapAndImage:
         parts = str_response.split('tag_')
 
         for part in parts[1:]:
-            part = part.replace("*", "")
-            part = part.replace(":", "")
-            part = part.replace("=", "")
-            part = part.replace("-", "")
+
             tag_list = part.split('[')
-            cls_idx = int(tag_list[0].strip())
+            cls_idx = tag_list[0].split('_')[0]
+            cls_idx = cls_idx.replace("-", "")
+            cls_idx = cls_idx.replace("=", "")
+            cls_idx = cls_idx.replace(":", "")
+            cls_idx = cls_idx.replace("*", "")
+            cls_idx = int(cls_idx.strip())
 
             for single in tag_list[1:]:
                 tag_list =  '[' + single.split('\']')[0] + '\']'
@@ -1600,4 +1602,4 @@ if __name__ == "__main__":
             detector.landmark_keys_to_modify = []
             detector.newclasses_for_landmarks = []
         ## change this time if you want to change the frequency of the service call
-        rospy.sleep(10)  # Simulate processing time 10
+        rospy.sleep(3)  # Simulate processing time 10
