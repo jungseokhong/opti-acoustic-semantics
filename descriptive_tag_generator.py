@@ -12,17 +12,16 @@ class tag_generator(PrefixProto):
     system_prompt = """
 Step 1: Identify the features of the object inside the bounding box for each tag number. If there are multiple objects of the same category in the scene, list each object with its unique color separately. Use the cropped images for reference.
  1. Color: What is the primary color of the <object>? If there are multiple objects of the same category, list each object with its unique color separately.
- 2. Shape: What shape or structural features does the <object> have?
- 3. Unique features: What features most effectively distinguish this <object> from similar objects?
+ 2. Unique features: What features most effectively distinguish this <object> from similar objects?
 Example:
  <object>: 
- Tag 0 1. green, 2. rectangle shape 3. green, with dot pattern
- tag 0 1. brown color, 2. rectangle shape, 3. brown color, with a handle 
+ Tag 0 1. green, 2. green, with dot pattern
+ tag 0 1. brown color, 2. brown color, with a handle 
   
-Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each. Use the format: tag_<tag_number> = ['<color> <object>', '<shape> <object>', '<unique features> <object>' ]
+Step 2: Create a descriptive tag for each <object> based on your answers. If multiple objects are identified, create separate tags for each. Use the format: tag_<tag_number> = ['<color> <object>', '<unique features> <object>' ]
 Example:
- tag_0 = ['green <object>', 'rectangular shape <object>', 'green <object> with a handle']
- tag_0 = ['brown <object>', 'rectangular shape <object>', 'brown <object> with a handle']
+ tag_0 = ['green <object>', 'green <object> with a handle']
+ tag_0 = ['brown <object>', 'brown <object> with a handle']
  
 """
 #Step 1: What are the main features that distinguish this object from other objects in the same class <object>?

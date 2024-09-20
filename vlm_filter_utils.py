@@ -17,10 +17,10 @@ class vision_filter(PrefixProto):
        example 1:
        Tag 1 (bag): Incorrect. It is empty
        Tag 4 (apple): Incorrect. It contains <object name>
-       Tag 5 (apple): Correct 
-       Tag 6 (soccer ball): Correct
-       Tag 7 (ball): Correct
-       Tag 8 (ball): Correct
+       Tag 5 (apple): Correct. It is green <object> 
+       Tag 6 (soccer ball): Correct. It is red <object> 
+       Tag 7 (ball): Correct. It is red <object>
+       Tag 8 (ball): Correct. It is red <object>
        Tag 11 (chair): Incorrect. It contains <object name>  
        
    Step 2. Determine if there are multiple tags pointing to the same object among the tags identified as correct in Step 1. Return Tags [number of multiple tags]. If there are no multiple tags for one object, return "no multiple tag".
