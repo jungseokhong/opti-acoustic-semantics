@@ -77,7 +77,6 @@ class Compare2DMapAndImage:
         except Exception as e:
             rospy.logerr(f"Failed to create directories: {e}")
 
-
         # self.output_dir.mkdir(exist_ok=True, parents=True)
         # self.output_dir2.mkdir(exist_ok=True, parents=True)
         # self.delete_file(self.output_dir / "results.json")  # remove .json file if exist
@@ -251,7 +250,6 @@ class Compare2DMapAndImage:
 
         # Store the class probabilities in a JSON file with ROS time
         json_file_path = self.output_dir / 'class_probabilities.json'
-
 
         # Load existing data if the file exists
         if os.path.exists(json_file_path):
@@ -631,7 +629,7 @@ class Compare2DMapAndImage:
                 intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
                 overlap = intersect_area / min(area1, area2)
 
-                if overlap > 0.7 and abs(depth1 - depth2) < 0.5:
+                if overlap > 0.7 and abs(depth1 - depth2) < 0.1:
                     # if True:
                     print(
                         f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
@@ -673,7 +671,6 @@ class Compare2DMapAndImage:
                         # Store the class probabilities in a JSON file with ROS time
                         json_file_path = self.output_dir / 'class_duplicates.json'
 
-
                         # Load existing data if the file exists
                         if os.path.exists(json_file_path):
                             try:
@@ -697,7 +694,6 @@ class Compare2DMapAndImage:
                         except IOError as e:
                             rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
 
-
         # Remove duplicates and reverse the list to safely delete without affecting indices
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
         for idx in overlapping_indices:
@@ -708,47 +704,48 @@ class Compare2DMapAndImage:
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
                         class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
         tag_area = []  # To determine if tags  are overlapping
+        pre_projected = projected_image.copy()
+
         for single_obj, ((tlx, tly), (brx, bry)), color in zip(obj, bounding_boxes, class_to_color.values()):
-            if single_obj['label']=="none":
+            if single_obj['label'] == "none":
                 continue
 
             # get tag_box positions
             (tlp_x, tlp_y), (brp_x, brp_y) = self.tag_box(tlx, tly, brx, bry, tag_box_size, tag_area)
-
             pre_projected = projected_image.copy()
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, -1)  # tag
-            cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # bounding box
+            cv2.rectangle(pre_projected, (tlp_x, tlp_y), (brp_x, brp_y), color, -1)  # tag
+            cv2.rectangle(pre_projected, (tlx, tly), (brx, bry), color, 3)  # bounding box
 
-            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected)
+            pre_projected = cv2.addWeighted(pre_projected, alpha, projected_image, 1 - alpha, 0, projected_image)
 
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brp_x, brp_y), color, 1)  # tags
-            self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
+            cv2.rectangle(pre_projected, (tlp_x, tlp_y), (brp_x, brp_y), color, 1)  # tags
+            self.draw_dashed_rectangle(pre_projected, (tlx, tly), (brx, bry), color, dash_length=5)
 
         # print text on the image
         for idx, (single_obj, tag) in enumerate(zip(obj, tag_area)):
-            if single_obj['label']=="none":
+            if single_obj['label'] == "none":
                 continue
             tag_name = f"[{single_obj['i']}]"
-            cv2.putText(projected_image, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
+            cv2.putText(pre_projected, tag_name, (tag[0], tag[3] - 6), cv2.FONT_HERSHEY_TRIPLEX, 0.65,
                         (0, 0, 0), 1, cv2.LINE_AA)
 
-            if cropped_imgs:
-                if single_obj['label']=="none":
+            if cropped_imgs != False:
+                if single_obj['label'] == "none":
                     continue
-                pre_projected = self.vlm_img_input[idx + 1].copy()
+                _projected = cropped_imgs[idx].copy()
                 add_w = int(tag_box_size // 1.3)
-                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
-                cv2.rectangle(pre_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], -1)
-                self.vlm_img_input[idx + 1] = cv2.addWeighted(self.vlm_img_input[idx + 1], alpha, pre_projected,
-                                                              1 - alpha, 0, pre_projected)
-                cv2.putText(self.vlm_img_input[idx + 1], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX,
+                cv2.rectangle(_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], 1)
+                cv2.rectangle(_projected, (0, 0), (tag_box_size + add_w, tag_box_size), class_to_color[idx], -1)
+                cropped_imgs[idx] = cv2.addWeighted(cropped_imgs[idx], alpha, _projected,
+                                                    1 - alpha, 0, _projected)
+                cv2.putText(cropped_imgs[idx], tag_name, (0, tag_box_size - 6), cv2.FONT_HERSHEY_TRIPLEX,
                             0.65,
                             (0, 0, 0), 1, cv2.LINE_AA)
 
-        return projected_image
+        return pre_projected, cropped_imgs
 
-
-    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image, bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25):
+    def draw_label_boxes(self, position, rotation_matrix, landmark_points, landmark_classes, yolo_img, projected_image,
+                         bounding_boxes, obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25):
         tag_area = []  # To determine if tags are overlapping
         image_height, image_width = projected_image.shape[:2]  # Get image dimensions
 
@@ -756,7 +753,7 @@ class Compare2DMapAndImage:
         label_y_offset = 20  # Starting y-coordinate for the first label from the top right corner
         letters = []
         for ((tlx, tly), (brx, bry)), single_obj, color in zip(bounding_boxes, obj, class_to_color.values()):
-            if single_obj['label']=="none":
+            if single_obj['label'] == "none":
                 continue
 
             label_text = single_obj['label']
@@ -768,10 +765,11 @@ class Compare2DMapAndImage:
             pre_projected = projected_image.copy()
             tag_x_padding = text_size[0] + 5 - (brx - tlp_x)
 
-            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1) # tag box
+            cv2.rectangle(projected_image, (tlp_x, tlp_y), (brx + tag_x_padding, brp_y), color, -1)  # tag box
             cv2.rectangle(projected_image, (tlx, tly), (brx, bry), color, 3)  # Bounding box
 
-            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0, pre_projected) # overlay
+            projected_image = cv2.addWeighted(projected_image, alpha, pre_projected, 1 - alpha, 0,
+                                              pre_projected)  # overlay
 
             # Draw the dashed rectangle around the bounding box
             self.draw_dashed_rectangle(projected_image, (tlx, tly), (brx, bry), color, dash_length=5)
@@ -792,7 +790,6 @@ class Compare2DMapAndImage:
         cv2.imwrite(str(output_path), projected_image)
         output_path = self.output_dir2 / "{:05d}_groundingdino.png".format(self.frame_num)
         cv2.imwrite(str(output_path), yolo_img)
-
 
         # Convert NumPy arrays to lists for JSON serialization
         frame_data = {
@@ -853,6 +850,10 @@ class Compare2DMapAndImage:
                                               landmark_points, landmark_classes,
                                               landmark_widths, landmark_heights, landmark_keys,
                                               yolo_img, msg_header, img=None):
+
+        # Map class indices to colors
+        class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
+
         # Quaternion to rotation matrix conversion
         q = orientation
 
@@ -872,9 +873,6 @@ class Compare2DMapAndImage:
         # Convert rotation matrix to Rodrigues vector
         R_vec, _ = cv2.Rodrigues(new_rotation_matrix)
         t_vec = position
-
-        # Project points
-        dist_coeffs = np.zeros(4)  # Assuming no lens distortion
 
         # building projection matrix
         RT = np.zeros([3, 4])
@@ -904,20 +902,18 @@ class Compare2DMapAndImage:
         else:
             projected_image = np.zeros((self.img_height, self.img_width, 3), dtype=np.uint8)
 
-        # Map class indices to colors
-        class_to_color = {i: self.colors[i % len(self.colors)] for i in range(len(landmark_classes))}
         # print(f"landmark widths {landmark_widths} landmark_heights {landmark_heights}, 2dpoints {points_2d_homo}")
 
         # Iterate over each projected point
         json_out = {}
         obj = []
-        tag_area = []
+
         bounding_boxes = []
         bbox_wo_padding = []
         depths = []
 
-        self.vlm_img_input = []
-        self.vlm_img_input.append(img.copy())
+        vlm_img_input = []
+        vlm_img_input.append(img.copy())
 
         for i, (point_3d, landmark_key, point_2d, point_3d_camera_frame) in enumerate(
                 zip(landmark_points, landmark_keys, points_2d_homo.T, points_3d_homo_camera_frame.T)):
@@ -949,16 +945,16 @@ class Compare2DMapAndImage:
                 bry = (y + scaled_height // 2) + add_h if (y + scaled_height // 2) + add_h < self.img_height \
                     else self.img_height - 2
 
-                #get valid bbox wo padding
-                tlx_wo = (x - scaled_width // 2) if (x - scaled_width // 2)  >= 0 else 1
-                tly_wo = (y - scaled_height // 2)  if (y - scaled_height // 2)  >= 0 else 1
-                brx_wo = (x + scaled_width // 2)  if (x + scaled_width // 2)  < self.img_width \
+                # get valid bbox wo padding
+                tlx_wo = (x - scaled_width // 2) if (x - scaled_width // 2) >= 0 else 1
+                tly_wo = (y - scaled_height // 2) if (y - scaled_height // 2) >= 0 else 1
+                brx_wo = (x + scaled_width // 2) if (x + scaled_width // 2) < self.img_width \
                     else self.img_width - 2
-                bry_wo = (y + scaled_height // 2)  if (y + scaled_height // 2)  < self.img_height \
+                bry_wo = (y + scaled_height // 2) if (y + scaled_height // 2) < self.img_height \
                     else self.img_height - 2
 
                 ##add cropped images
-                self.vlm_img_input.append(img[tly:bry, tlx:brx].copy())
+                vlm_img_input.append(img[tly:bry, tlx:brx].copy())
 
                 bounding_boxes.append(((tlx, tly), (brx, bry)))
                 bbox_wo_padding.append(((tlx_wo, tly_wo), (brx_wo, bry_wo)))
@@ -969,18 +965,20 @@ class Compare2DMapAndImage:
                            "x": x, "y": y, "z": Z, "i": i,
                            "landmark_key": str(landmark_key),
                            "bbox": [tlx, tly, brx, bry],
-                           "bbox_wo_padding" : [tlx_wo, tly_wo, brx_wo, bry_wo]
+                           "bbox_wo_padding": [tlx_wo, tly_wo, brx_wo, bry_wo]
                            }
                 obj.append(obj_dic)
 
         self.removeoverlap(bounding_boxes, depths, obj)
         self.removeoverlap_with_semantics(bounding_boxes, depths, obj, self.unique_precise_tags_list, msg_header)
         projected_image2 = projected_image.copy()
-        projected_image = self.draw_tags_boxes(projected_image, bounding_boxes,
-                                               obj, class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=True)
-        projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes, yolo_img,
+        projected_image_box, projected_crop_imgs = self.draw_tags_boxes(projected_image, bounding_boxes,
+                                                                        obj, class_to_color, alpha=0.4, tag_box_size=25,
+                                                                        cropped_imgs=vlm_img_input)
+        projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes,
+                                                      yolo_img,
                                                       projected_image2, bbox_wo_padding,
-                                               obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25)
+                                                      obj, class_to_color, msg_header, alpha=0.4, tag_box_size=25)
 
         self.vlm_cls_key = [np.int64(d["landmark_key"]) for d in obj]  # key
         self.vlm_cls_input = [d["label"] for d in obj]  # class name
@@ -993,12 +991,12 @@ class Compare2DMapAndImage:
             # json_out["{:05d}.png".format(self.frame_num)] = {"contents": obj}
             json_out["contents"] = obj
 
-            self.save_img(img, projected_image)#, projected_image_label)
+            self.save_img(img, projected_image_box)  # , projected_image_label)
 
             self.save_json(json_out, self.output_dir)
 
         # self.vlm_img_input = projected_image
-        self.vlm_img_input[0] = projected_image
+        self.vlm_img_input = [projected_image_box] + projected_crop_imgs
         return projected_image
 
     def save_img(self, img, projected_image, additional=None):
