@@ -12,8 +12,8 @@ import json
 import message_filters
 import numpy as np
 import rospy
-from cv_bridge import CvBridge
 import cv2
+from cv_bridge import CvBridge
 from openai import OpenAI
 from semanticslam_ros.msg import MapInfo, ObjectsVector, AllClassProbabilities, ClassProbabilities
 
@@ -38,7 +38,7 @@ sys.path.append(os.environ['LLM_MAPPING'])
 import random
 from beantown_agent.map_agent import vision_agent
 from beantown_agent.agent_utils import return_str
-
+import spacy
 
 # K: [527.150146484375, 0.0, 485.47442626953125, 0.0, 527.150146484375, 271.170166015625, 0.0, 0.0, 1.0]
 # [TODO] should subscribe to the camera info topic to get the camera matrix K rather than hardcoding it
@@ -149,6 +149,7 @@ class Compare2DMapAndImage:
         self.unique_precise_tags_list = []
         self.duplicate_tags_list = []
         self.landmark_keys_duplicated = []  # stores keys to remove landmarks (duplicating tags)
+        self.nlp = spacy.load("en_core_web_md")
 
     def delete_file(self, path):
         if path.exists():
@@ -605,10 +606,17 @@ class Compare2DMapAndImage:
                         overlapping_indices.append(i + j + 1)
 
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
+        if len(overlapping_indices) > 0:
+            print(f'length of bounding_boxes: {len(bounding_boxes)} depth: {len(depths)} obj: {len(obj)}')
+
         for idx in overlapping_indices:
             del bounding_boxes[idx]
             del depths[idx]
             del obj[idx]
+        
+        if len(overlapping_indices) > 0:
+            print(f'after overlapbing_indices: {len(overlapping_indices)} length of bounding_boxes: {len(bounding_boxes)} depth: {len(depths)} obj: {len(obj)}')
+
 
     def removeoverlap_with_semantics(self, bounding_boxes, depths, obj, precise_tag_list, msg_header):
         overlapping_indices = []
@@ -631,12 +639,14 @@ class Compare2DMapAndImage:
                 intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
                 overlap = intersect_area / min(area1, area2)
 
-                if overlap > 0.7 and abs(depth1 - depth2) < 0.5:
+                if overlap > 0.7 and abs(depth1 - depth2) < 0.1:
                     # if True:
-                    print(
-                        f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
+                    # print(
+                    #     f"======overlap: {overlap} depth: {abs(depth1 - depth2)} Overlap detected between {class1['label']} and {class2['label']}")
+                    
                     class1_label = class1["label"]
                     class2_label = class2["label"]
+
 
                     # Check if class2 (less precise) is semantically connected to class1 (precise)
                     # print(f'class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
@@ -649,8 +659,8 @@ class Compare2DMapAndImage:
                     #         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
 
                     if class1_label in list(self.confusion_matrix_for_duplicates[class2_label].keys()):
-                        print(
-                            f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
+                        # print(
+                        #     f'====class1_label: {class1_label}, in this : {list(self.confusion_matrix_for_duplicates[class2_label].keys())}')
                         # If connected by semantics, mark the less precise bounding box for removal
                         overlapping_indices.append(i + j + 1)
                         self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
@@ -696,14 +706,23 @@ class Compare2DMapAndImage:
                             # rospy.loginfo(f"Class duplicates saved to {json_file_path}")
                         except IOError as e:
                             rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
+                elif (overlap > 0.7 and abs(depth1 - depth2) < 0.5) and self.nlp(str(class1["label"])).similarity(self.nlp(str(class2["label"]))) > 0.4:
+                    overlapping_indices.append(i + j + 1)
+                    self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
 
 
         # Remove duplicates and reverse the list to safely delete without affecting indices
+        if len(overlapping_indices) > 0:
+            print(f's length of bounding_boxes: {len(bounding_boxes)} depth: {len(depths)} obj: {len(obj)}')
+
         overlapping_indices = sorted(set(overlapping_indices), reverse=True)
         for idx in overlapping_indices:
             del bounding_boxes[idx]
             del depths[idx]
             del obj[idx]
+        if len(overlapping_indices) > 0:
+            print(f's after overlapbing_indices: {len(overlapping_indices)} length of bounding_boxes: {len(bounding_boxes)} depth: {len(depths)} obj: {len(obj)}')
+
 
     def draw_tags_boxes(self, projected_image, bounding_boxes, obj,
                         class_to_color, alpha=0.4, tag_box_size=25, cropped_imgs=False):
@@ -1459,12 +1478,12 @@ class Compare2DMapAndImage:
                     # Add the duplicate tag to the list
                     if duplicate_tag_value not in self.duplicate_tags_list:
                         self.duplicate_tags_list.append(duplicate_tag_value)
-        print("Unique Precise Tags:", self.unique_precise_tags_list)
-        print("Duplicate Tags:", self.duplicate_tags_list)
+        # print("Unique Precise Tags:", self.unique_precise_tags_list)
+        # print("Duplicate Tags:", self.duplicate_tags_list)
 
-        print("Confusion Matrix duplicate:")
-        for predicted_class, corrections in self.confusion_matrix_for_duplicates.items():
-            print(f"{predicted_class}: {dict(corrections)}")
+        # print("Confusion Matrix duplicate:")
+        # for predicted_class, corrections in self.confusion_matrix_for_duplicates.items():
+        #     print(f"{predicted_class}: {dict(corrections)}")
 
         # Confusion Matrix duplicate:
         # fan: {'mechanical fan': 3}
@@ -1480,7 +1499,7 @@ class Compare2DMapAndImage:
         # Filtering correct class names based on correct tags
         correct_cls_input = [cls_name for cls_name, idx in zip(vlm_cls_input, vlm_cls_input_idx) if
                              idx not in incorrect_tags]
-        print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
+        # print(f"correct_tags: {correct_tags} correct_cls_input: {correct_cls_input}")
 
         for correct_tag, original_correct_tag in zip(correct_tags, correct_cls_input):
             # if the tag has been removed then we don't need to update the confusion matrix

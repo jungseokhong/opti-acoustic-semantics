@@ -27,7 +27,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 CONF_THRESH = 0.25  # Confidence threshold used for YOLO, default is 0.25
 EMBEDDING_LEN = 300  # Length of the embedding vector, default is 512
-DETECTOR__CONF_THRESH = 0.6  # 0.76  # Confidence threshold used for the detector, default is 0.5
+DETECTOR__CONF_THRESH = 0.5  # 0.76  # Confidence threshold used for the detector, default is 0.5
 OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 DETECTOR_VISUALIZATION_THRESHOLD = DETECTOR__CONF_THRESH # visualization threshold for (RAM+DINO)/2
 USE_PROBABILITIES = True  # use probabilities from the service to update class
@@ -39,7 +39,7 @@ general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
                               'floor', 'ceiling', 'carpet', 'mat',
                              'restroom', 'bathroom', 'dressing',
                              'person', 'child',
-                             'black', 'yellow', 'red', 'blue', 'white'] # works only for SLAM landmarks, not for a detector
+                             'black', 'yellow', 'red', 'blue', 'white', 'green', 'table'] # works only for SLAM landmarks, not for a detector
 
 def unproject(u, v, depth, cam_info):
     """
@@ -338,7 +338,7 @@ class ClosedSetDetector:
 
                 # if use probabilities from the service to update class
                 conf_prior = (confidence + detections.ram_conf[i]) / 2 ## [TODO]: check if this is the right way to get the confidence
-                if USE_PROBABILITIES:
+                if USE_PROBABILITIES and len(self.probabilities[classes[class_id]]) > 2:
 
                     # updated_prob = dict()
                     # updated_prob[classes[class_id]] = conf_prior # once update the confusion matrix, this line should be removed
