@@ -974,7 +974,7 @@ class Compare2DMapAndImage:
         projected_image2 = projected_image.copy()
         projected_image_box, projected_crop_imgs = self.draw_tags_boxes(projected_image, bounding_boxes,
                                                                         obj, class_to_color, alpha=0.4, tag_box_size=25,
-                                                                        cropped_imgs=vlm_img_input)
+                                                                        cropped_imgs=vlm_img_input[1:])
         projected_image_label = self.draw_label_boxes(position, rotation_matrix, landmark_points, landmark_classes,
                                                       yolo_img,
                                                       projected_image2, bbox_wo_padding,
@@ -1070,34 +1070,6 @@ class Compare2DMapAndImage:
         str_response = return_str(vlm_response)
         return str_response
 
-    def memory_injection(self, vlm_filter):
-        user_commant = """cup: 0, book: 1, baseball hat: 3, baseball hat: 4, hat: 7"""
-        commant = """\nExamples of each step's output for the given image and its tags:\n"""
-        assistant_commant = """Step 1. 
-        Tag 0 (cup): Incorrect.The bounding box contains a ball.
-        Tag 1 (book): Correct. 
-        Tag 3 (baseball hat): Correct. 
-        Tag 4 (baseball hat): Correct.   
-        Tag 7 (hat): Correct. 
-    Step 2. 
-        Tags [3, 4, 7] are pointing to the same object. 
-    Step 3. 
-        Tags [3, 4, 7] : "Baseball hat" is a more precise tag than "hat" since there is an LA mark on it. Tag 3 focuses on only a smaller part, but Tag 4 covers the entire object. Therefore, precise_tag = [4]
-    Step 4. 
-        unmatched_tags = [0]
-        unmatched_tags = [3, 7]
-    Step 5.
-        unmatched_tags = [0, 3, 7] """
-
-        vlm_filter.reset_with_img(role="user", prompt=user_commant,
-                                  img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
-        vlm_filter.add_memory_with_prompts(role="assistant", prompt=assistant_commant)
-
-        ####
-        # vlm_filter.reset_with_img(role="system", prompt=user_commant+commant+assistant_commant,
-        #                                img="/home/beantown/ran/llm_ws/src/maxmixtures/opti-acoustic-semantics/example_image.png")
-        #
-
     def extract_list(self, response, keyword):
         rest_response = response.split(keyword)[-1].split('[', 1)[-1].strip()
         part = rest_response.split(']')[0]
@@ -1159,18 +1131,18 @@ class Compare2DMapAndImage:
             cls_idx = int(cls_idx.strip())
 
             for single in tag_list[1:]:
-                tag_list =  '[' + single.split('\']')[0] + '\']'
+                tags =  '[' + single.split(']')[0] + ']'
 
                 try:
                     base = np.where(np.isin(cls_idc, cls_idx))[0][0]
-                    tag_list = literal_eval(tag_list.strip())
+                    tags = literal_eval(tags.strip())
 
-                    tag_list[0] =tag_list[0].replace(",","")
+                    tags[0] =tags[0].replace(",","")
                     cls_matched_descriptive_tags.append(cls_names[base])
-                    cls_idx_matched_descriptive_tags.append(tag_list)
+                    cls_idx_matched_descriptive_tags.append(tags)
                     cls_key_matched_descriptive_tags.append(cls_keys[base])
                     cls_key_matched_locations.append(cls_locations[base])
-                    print("generated tags:", tag_list)
+                    print("generated tags:", tags)
 
                 except:
                     print(f"\nerror during extract the result list..{part}\n")
@@ -1181,6 +1153,7 @@ class Compare2DMapAndImage:
         # save json file
         data = self.open_json(self.descriptive_tag_json)
 
+        add_tags = []
         for general_tag, descriptive_tags, general_tag_key, location in zip(cls_matched_descriptive_tags,
                                                                             cls_idx_matched_descriptive_tags,
                                                                             cls_key_matched_descriptive_tags,
@@ -1191,9 +1164,10 @@ class Compare2DMapAndImage:
                 data[general_tag] = {}
             if f'{descriptive_tags[0]}' not in data[general_tag]:
                 data[general_tag][f'{descriptive_tags[0]}'] = info
+                add_tags.append(descriptive_tags[0])
 
         self.save_json_from_path(self.descriptive_tag_json, data)
-        return tag_list
+        return add_tags
 
     ## TODO: finalize this function
     def return_landmarks_to_modify(self, str_response, vlm_cls_input, vlm_cls_input_idx):
@@ -1399,6 +1373,7 @@ class Compare2DMapAndImage:
         print("frame : ", frame_num)
         print("tags :", vlm_cls_input, vlm_cls_input_idx)
 
+        ##ssave cropped imgs
         # for idx, img in enumerate(vlm_img_input[1:]):
         #     cv2.imwrite(str(self.output_dir / "{:05d}_input_{:02d}.png".format(frame_num, idx)), img)
 
@@ -1435,7 +1410,6 @@ class Compare2DMapAndImage:
                                        vlm_cls_input, vlm_cls_input_idx, vlm_cls_key, vlm_cls_location,
                                        idx_to_remove1))
 
-        # print(f'vlm_cls_input_idx: {vlm_cls_input_idx} vlm_cls_input: {vlm_cls_input} vlm_cls_key: {vlm_cls_key}')
         # Creating the dictionary for vlm_cls_input
         vlm_cls_input_dict = dict(zip(vlm_cls_input_idx, vlm_cls_input))
 
