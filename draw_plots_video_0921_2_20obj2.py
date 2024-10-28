@@ -137,10 +137,10 @@ def plot_3d_landmarks_and_robot_poses3(json_file_path, frame_num, output_folder)
         num_landmarks = len(landmark_points)
 
         # Update the title with number of landmarks
-        # if frame == 316:
-        #     ax.set_title(f'Number of Landmarks: {num_landmarks}')
+        if frame == 185 or frame == 232:
+            ax.set_title(f'Number of Landmarks: {num_landmarks}')
 
-        ax.set_title(f'3D Landmark Plot and Robot Poses for Frame {frame} | Number of Landmarks: {num_landmarks}')
+        # ax.set_title(f'3D Landmark Plot and Robot Poses for Frame {frame} | Number of Landmarks: {num_landmarks}')
         ax.view_init(elev=22, azim=177)
         ax.set_box_aspect([0.3, 2, 1])
 
@@ -162,16 +162,16 @@ def plot_3d_landmarks_and_robot_poses3(json_file_path, frame_num, output_folder)
         legend = ax.legend(handles=legend_items, title="Number: Landmark Class", loc='center', bbox_to_anchor=(0.5, -0.15), ncol=4)
 
         # Check if the legend exists and modify the text color for absent classes
-        # if legend:
-        #     for text in legend.get_texts():
-        #         cls_name = text.get_text().split(": ")[1]
-        #         if cls_name not in present_classes:
-        #             text.set_color("white")  # Change font color to white for absent classes
+        if legend:
+            for text in legend.get_texts():
+                cls_name = text.get_text().split(": ")[1]
+                if cls_name not in present_classes:
+                    text.set_color("white")  # Change font color to white for absent classes
 
         plt.subplots_adjust(bottom=0.3)
 
         # Save the current frame as a PNG image
-        plt.savefig(f'{output_folder}/frame_{frame:04d}.png')
+        plt.savefig(f'{output_folder}/frame_{frame:04d}.png', dpi=300)
         plt.close(fig)
         # plt.show()
 
@@ -181,7 +181,7 @@ def plot_3d_landmarks_and_robot_poses3(json_file_path, frame_num, output_folder)
 
 # Example usage
 # json_file_path = '/home/jungseok/Downloads/landmarks_try4.json'
-json_file_path = '/home/jungseok/Downloads/llm_data/llm_filter_output_20obj2_0.5_0.1_spacy/labels/landmarks.json'
+json_file_path = '/home/jungseok/Downloads/llm_data/llm_filter_output_20obj2_0.53_0.1_spacy/labels/landmarks.json'
 frame_num = 520  # Specify the frame number
 output_folder = '/home/jungseok/Downloads/landmark_frames'
 
