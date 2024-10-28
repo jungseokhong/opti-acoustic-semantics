@@ -32,7 +32,7 @@ OBJECT_DEPTH_TRHES = 10.0  # 3.0  # Depth threshold for objects, default is 5.0
 DETECTOR_VISUALIZATION_THRESHOLD = DETECTOR__CONF_THRESH # visualization threshold for (RAM+DINO)/2
 USE_PROBABILITIES = True  # use probabilities from the service to update class
 
-debug = True  # debugging mode
+debug = False  # debugging mode
 debug_frame_num = 0
 debug_output_path = f"{os.environ['DATASETS']}/llm_data/output_ojd"
 general_classes_to_remove = ['ceiling', 'floor', 'wall', 'room', 'classroom',
@@ -302,7 +302,7 @@ class ClosedSetDetector:
                 debug_frame_num += 1
                 out_name = f"{debug_output_path}/frame_{debug_frame_num:04}.png"
                 pathlib.Path(debug_output_path).mkdir(exist_ok=True, parents=True)
-                cv2.imwrite(out_name, visualization)
+                # cv2.imwrite(out_name, visualization)
 
                 out_name = f"{debug_output_path}/confidences.txt"
                 with open(out_name, 'a', encoding='utf-8') as file:
