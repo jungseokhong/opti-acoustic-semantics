@@ -706,9 +706,41 @@ class Compare2DMapAndImage:
                             # rospy.loginfo(f"Class duplicates saved to {json_file_path}")
                         except IOError as e:
                             rospy.logerr(f"Failed to write class duplicates to JSON file: {e}")
-                elif (overlap > 0.7 and abs(depth1 - depth2) < 0.5) and self.nlp(str(class1["label"])).similarity(self.nlp(str(class2["label"]))) > 0.4:
+                elif (overlap > 0.4 and abs(depth1 - depth2) < 0.5) and self.nlp(str(class1["label"])).similarity(self.nlp(str(class2["label"]))) > 0.4:
                     overlapping_indices.append(i + j + 1)
                     self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+                    class1_label = class1["label"]
+                    class2_label = class2["label"]
+                    print(f"Duplicate tag found using semantics: {class2_label} will be removed due to {class1_label}")
+
+
+        # for i, (bbox1, depth1, class1) in enumerate(zip(bounding_boxes, depths, obj)):
+        #     for j, (bbox2, depth2, class2) in enumerate(zip(bounding_boxes[i + 1:], depths[i + 1:], obj[i + 1:])):
+        #         tl1, br1 = bbox1
+        #         tl2, br2 = bbox2
+
+        #         # print(f'tl1: {tl1}, br1: {br1}, tl2: {tl2}, br2: {br2} bbox1: {bbox1}, bbox2: {bbox2}')
+        #         area1 = (br1[0] - tl1[0]) * (-(tl1[1] - br1[1]))
+        #         area2 = (br2[0] - tl2[0]) * (-(tl2[1] - br2[1]))
+
+        #         intersect_tl = (max(tl1[0], tl2[0]), max(tl1[1], tl2[1]))
+        #         intersect_br = (min(br1[0], br2[0]), min(br1[1], br2[1]))
+
+        #         intersect_area = max(0, intersect_br[0] - intersect_tl[0]) * max(0, -intersect_tl[1] + intersect_br[1])
+        #         overlap = intersect_area / min(area1, area2)
+        #         class1_label = str(class1["label"])
+        #         class2_label = str(class2["label"])
+        #         semantic_similarity = self.nlp(class1_label).similarity(self.nlp(class2_label))
+
+        #         if (overlap > 0.4) and (abs(depth1 - depth2) < 0.5) and (semantic_similarity > 0.4):
+        #             overlapping_indices.append(i + j + 1)
+        #             if len(class1_label) > len(class2_label):
+        #                 self.landmark_keys_duplicated.append(np.int64(class1["landmark_key"]))
+        #                 print(f"semantic - Duplicate overlap: {overlap}, sim{semantic_similarity} :{class1_label} will be removed due to {class2_label}")
+        #             else:
+        #                 self.landmark_keys_duplicated.append(np.int64(class2["landmark_key"]))
+        #                 print(f"semantic - Duplicate overlap: {overlap}, sim{semantic_similarity} :{class2_label} will be removed due to {class1_label}")
+
 
 
         # Remove duplicates and reverse the list to safely delete without affecting indices
@@ -1601,12 +1633,12 @@ if __name__ == "__main__":
 
         if REMOVE_DUPLICATES:
             print(f'landmark keys to remove due to duplication: {detector.landmark_keys_duplicated}')
-            for landmark_key in detector.landmark_keys_duplicated:
+            for landmark_key in set(detector.landmark_keys_duplicated):
                 success = detector.call_remove_landmark_service(landmark_key)
                 rospy.loginfo("Service call success (duplicated): %s" % success)
         detector.landmark_keys_duplicated = []
 
-        for landmark_key in detector.landmark_keys:
+        for landmark_key in set(detector.landmark_keys):
             success = detector.call_remove_landmark_service(landmark_key)
             rospy.loginfo("Service call success: %s" % success)
         detector.landmark_keys = []
